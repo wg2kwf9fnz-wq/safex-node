@@ -79,7 +79,7 @@ libwallet-build-android:
                          		-DCMAKE_POSITION_INDEPENDENT_CODE:BOOL=true \
                          		-DCMAKE_ARCHIVE_OUTPUT_DIRECTORY=${PWD}/deps \
                          		-DCMAKE_TOOLCHAIN_FILE=$(CURDIR)/contrib/depends/aarch64-linux-android/share/toolchain.cmake \
-                         		../.. && $(MAKE) wallet_merged epee easylogging lmdb unbound VERBOSE=1
+                         		../.. && $(MAKE) wallet_merged epee easylogging lmdb unbound randomx blocks blockchain_db VERBOSE=1
 
 depends:
 	cd contrib/depends && $(MAKE) HOST=$(target) && cd ../.. && mkdir -p build/$(target)/release
