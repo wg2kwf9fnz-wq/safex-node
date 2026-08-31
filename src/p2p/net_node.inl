@@ -60,7 +60,7 @@
 
 #define NET_MAKE_IP(b1,b2,b3,b4)  ((LPARAM)(((DWORD)(b1)<<24)+((DWORD)(b2)<<16)+((DWORD)(b3)<<8)+((DWORD)(b4))))
 
-#define MIN_WANTED_SEED_NODES 12
+#define MIN_WANTED_SEED_NODES 1
 
 namespace nodetool
 {
@@ -428,14 +428,8 @@ namespace nodetool
     }
     else
     {
-      full_addrs.insert("seed.safex.io:17401"); //178.128.126.76:17401
-      full_addrs.insert("178.128.126.75:17401");
-      full_addrs.insert("178.128.126.69:17401");
-      full_addrs.insert("159.65.72.114:17401");
-      full_addrs.insert("206.189.70.207:17401");
-      full_addrs.insert("178.128.166.139:17401");
-      full_addrs.insert("188.166.153.184:17401");
-      full_addrs.insert("142.93.171.239:17401");
+      full_addrs.insert("seed.safex.io:17401");
+      full_addrs.insert("seed.safex.org:17401");
     }
     return full_addrs;
   }

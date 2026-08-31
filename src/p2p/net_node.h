@@ -129,7 +129,8 @@ namespace nodetool
   private:
     const std::vector<std::string> m_seed_nodes_list =
     {
-      "192.168.8.105"
+      "seed.safex.io",
+      "seed.safex.org"
     };
 
     bool islimitup=false;
