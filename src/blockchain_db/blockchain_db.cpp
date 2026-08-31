@@ -341,36 +341,43 @@ bool BlockchainDB::is_open() const
 
 void BlockchainDB::remove_transaction(const crypto::hash& tx_hash)
 {
-  transaction tx = get_tx(tx_hash);
+    transaction tx = get_tx(tx_hash);
+    bool contains_token_unstake = false;
+    for (const txin_v& tx_input : tx.vin)
+    {
+        if (tx_input.type() == typeid(txin_to_key))
+        {
+            remove_spent_key(
+                    boost::get<txin_to_key>(tx_input).k_image);
+        }
+        else if (tx_input.type() == typeid(txin_token_to_key))
+        {
+            remove_spent_key(
+                    boost::get<txin_token_to_key>(tx_input).k_image);
+        }
+        else if (tx_input.type() == typeid(txin_token_migration))
+        {
+            remove_spent_key(
+                    boost::get<txin_token_migration>(tx_input).k_image);
+        }
+        else if (tx_input.type() == typeid(txin_to_script))
+        {
+            const auto& input =
+                    boost::get<txin_to_script>(tx_input);
+            if (input.command_type == safex::command_t::token_unstake)
+                contains_token_unstake = true;
+            if (safex::is_safex_key_image_verification_needed(
+                    input.command_type))
+            {
+                remove_spent_key(input.k_image);
+            }
+        }
+    }
 
-  for (const txin_v& tx_input : tx.vin)
-  {
-    if (tx_input.type() == typeid(txin_to_key))
-    {
-      remove_spent_key(boost::get<txin_to_key>(tx_input).k_image);
-    }
-    else if (tx_input.type() == typeid(txin_token_to_key))
-    {
-      remove_spent_key(boost::get<txin_token_to_key>(tx_input).k_image);
-    }
-    else if (tx_input.type() == typeid(txin_token_migration))
-    {
-      remove_spent_key(boost::get<txin_token_migration>(tx_input).k_image);
-    }
-    else if (tx_input.type() == typeid(txin_to_script))
-    {
-      auto input = boost::get<txin_to_script>(tx_input);
-      if(input.command_type == safex::command_t::token_unstake)
+    if (contains_token_unstake)
         remove_unstake_token(tx_hash, tx);
 
-      if(safex::is_safex_key_image_verification_needed(input.command_type))
-        remove_spent_key(boost::get<txin_to_script>(tx_input).k_image);
-    }
-
-  }
-
-  // need tx as tx.vout has the tx outputs, and the output amounts are needed
-  remove_transaction_data(tx_hash, tx);
+    remove_transaction_data(tx_hash, tx);
 }
 
 void BlockchainDB::revert_transaction(const crypto::hash &tx_hash)

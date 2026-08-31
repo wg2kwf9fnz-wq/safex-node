@@ -124,3 +124,29 @@ public:
 
 private:
 };
+class gen_unstake_reorg_rollback : public test_chain_unit_base
+{
+public:
+    gen_unstake_reorg_rollback();
+
+    bool generate(
+            std::vector<test_event_entry>& events) const;
+
+    bool check_before_unstake(
+            cryptonote::core& c,
+            size_t ev_index,
+            const std::vector<test_event_entry>& events);
+
+    bool check_after_unstake(
+            cryptonote::core& c,
+            size_t ev_index,
+            const std::vector<test_event_entry>& events);
+
+    bool check_after_shallow_reorg(
+            cryptonote::core& c,
+            size_t ev_index,
+            const std::vector<test_event_entry>& events);
+
+    static crypto::hash get_hash_from_string(
+            const std::string& hashstr);
+};

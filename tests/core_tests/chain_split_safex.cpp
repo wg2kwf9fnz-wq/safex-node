@@ -2259,3 +2259,235 @@ bool gen_simple_chain_split_safex::check_split_switched_back_feedback(cryptonote
 
   return true;
 }
+//-----------------------------------------------------------------------------------------------------
+gen_unstake_reorg_rollback::gen_unstake_reorg_rollback()
+{
+    REGISTER_CALLBACK(
+            "check_before_unstake",
+            gen_unstake_reorg_rollback::check_before_unstake);
+
+    REGISTER_CALLBACK(
+            "check_after_unstake",
+            gen_unstake_reorg_rollback::check_after_unstake);
+
+    REGISTER_CALLBACK(
+            "check_after_shallow_reorg",
+            gen_unstake_reorg_rollback::check_after_shallow_reorg);
+}
+
+//-----------------------------------------------------------------------------------------------------
+crypto::hash gen_unstake_reorg_rollback::get_hash_from_string(
+        const std::string& hashstr)
+{
+    cryptonote::blobdata hash_data;
+
+    if (!epee::string_tools::parse_hexstr_to_binbuff(hashstr, hash_data) ||
+        hash_data.size() != sizeof(crypto::hash))
+    {
+        return boost::value_initialized<crypto::hash>();
+    }
+
+    return *reinterpret_cast<const crypto::hash*>(hash_data.data());
+}
+
+//-----------------------------------------------------------------------------------------------------
+bool gen_unstake_reorg_rollback::generate(
+        std::vector<test_event_entry>& events) const
+{
+    const uint64_t ts_start = 1530720632;
+
+    GENERATE_ACCOUNT(miner);
+
+    crypto::public_key miner_public_key =
+            AUTO_VAL_INIT(miner_public_key);
+
+    crypto::secret_key_to_public_key(
+            miner.get_keys().m_spend_secret_key,
+            miner_public_key);
+
+    cryptonote::fakechain::set_core_tests_public_key(
+            miner_public_key);
+
+    MAKE_GENESIS_BLOCK(events, blk_0, miner, ts_start);
+
+    MAKE_ACCOUNT(events, alice);
+
+    MAKE_NEXT_BLOCK(events, blk_1, blk_0, miner);
+    MAKE_NEXT_BLOCK(events, blk_2, blk_1, miner);
+
+    REWIND_BLOCKS(events, blk_2rr, blk_2, miner);
+    REWIND_BLOCKS(events, blk_2r, blk_2rr, miner);
+
+    MAKE_TX_MIGRATION_LIST_START(
+            events,
+            migration_txs,
+            miner,
+            alice,
+            MK_TOKENS(50000),
+            blk_2r,
+            get_hash_from_string(
+                    "3b7ac2a66eded32dcdc61f0fec7e9ddb30ccb3c6f5f06c0743c786e979130c5f"));
+
+    MAKE_NEXT_BLOCK_TX_LIST(
+            events,
+            blk_3,
+            blk_2r,
+            miner,
+            migration_txs);
+
+    REWIND_BLOCKS(events, blk_3r, blk_3, miner);
+
+    MAKE_TX_TOKEN_LOCK_LIST_START(
+            events,
+            stake_txs,
+            alice,
+            MK_TOKENS(50000),
+            blk_3r);
+
+    MAKE_NEXT_BLOCK_TX_LIST(
+            events,
+            blk_4,
+            blk_3r,
+            miner,
+            stake_txs);
+
+    REWIND_BLOCKS_N(
+            events,
+            blk_5,
+            blk_4,
+            miner,
+            40);
+
+    DO_CALLBACK(events, "check_before_unstake");
+
+    MAKE_TX_TOKEN_UNLOCK_LIST_START(
+            events,
+            unstake_txs,
+            alice,
+            MK_TOKENS(50000),
+            blk_5);
+
+    MAKE_NEXT_BLOCK_TX_LIST(
+            events,
+            blk_unstake,
+            blk_5,
+            miner,
+            unstake_txs);
+
+    DO_CALLBACK(events, "check_after_unstake");
+
+    MAKE_NEXT_BLOCK(
+            events,
+            blk_alt_1,
+            blk_5,
+            miner);
+
+    MAKE_NEXT_BLOCK(
+            events,
+            blk_alt_2,
+            blk_alt_1,
+            miner);
+
+    DO_CALLBACK(events, "check_after_shallow_reorg");
+
+    return true;
+}
+
+//-----------------------------------------------------------------------------------------------------
+bool gen_unstake_reorg_rollback::check_before_unstake(
+        cryptonote::core& c,
+        size_t ev_index,
+        const std::vector<test_event_entry>& events)
+{
+    DEFINE_TESTS_ERROR_CONTEXT(
+            "gen_unstake_reorg_rollback::check_before_unstake");
+
+    auto& db = c.get_blockchain_storage().get_db();
+
+    const uint64_t current_top_height =
+            c.get_current_blockchain_height() - 1;
+
+    const uint64_t unstake_height =
+            current_top_height + 1;
+
+    const uint64_t unstake_interval =
+            safex::calculate_interval_for_height(
+                    unstake_height,
+                    cryptonote::FAKECHAIN);
+
+    CHECK_EQ(
+            MK_TOKENS(50000),
+            db.get_current_staked_token_sum());
+
+    CHECK_EQ(
+            MK_TOKENS(50000),
+            db.get_staked_token_sum_for_interval(
+                    unstake_interval));
+
+    return true;
+}
+
+//-----------------------------------------------------------------------------------------------------
+bool gen_unstake_reorg_rollback::check_after_unstake(
+        cryptonote::core& c,
+        size_t ev_index,
+        const std::vector<test_event_entry>& events)
+{
+    DEFINE_TESTS_ERROR_CONTEXT(
+            "gen_unstake_reorg_rollback::check_after_unstake");
+
+    auto& db = c.get_blockchain_storage().get_db();
+
+    const uint64_t unstake_height =
+            c.get_current_blockchain_height() - 1;
+
+    const uint64_t unstake_interval =
+            safex::calculate_interval_for_height(
+                    unstake_height,
+                    cryptonote::FAKECHAIN);
+
+    CHECK_EQ(
+            static_cast<uint64_t>(0),
+            db.get_current_staked_token_sum());
+
+    CHECK_EQ(
+            static_cast<uint64_t>(0),
+            db.get_staked_token_sum_for_interval(
+                    unstake_interval));
+
+    return true;
+}
+
+//-----------------------------------------------------------------------------------------------------
+bool gen_unstake_reorg_rollback::check_after_shallow_reorg(
+        cryptonote::core& c,
+        size_t ev_index,
+        const std::vector<test_event_entry>& events)
+{
+    DEFINE_TESTS_ERROR_CONTEXT(
+            "gen_unstake_reorg_rollback::check_after_shallow_reorg");
+
+    auto& db = c.get_blockchain_storage().get_db();
+
+    const uint64_t current_top_height =
+            c.get_current_blockchain_height() - 1;
+
+    const uint64_t orphaned_unstake_height =
+            current_top_height - 1;
+
+    const uint64_t unstake_interval =
+            safex::calculate_interval_for_height(
+                    orphaned_unstake_height,
+                    cryptonote::FAKECHAIN);
+
+    CHECK_EQ(
+            MK_TOKENS(50000),
+            db.get_current_staked_token_sum());
+
+    CHECK_EQ(
+            MK_TOKENS(50000),
+            db.get_staked_token_sum_for_interval(
+                    unstake_interval));
+
+    return true;
+}

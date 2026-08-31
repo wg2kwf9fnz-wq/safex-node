@@ -224,6 +224,8 @@ int main(int argc, char* argv[])
 
     GENERATE_AND_PLAY(gen_simple_chain_split_safex);
 
+    GENERATE_AND_PLAY(gen_unstake_reorg_rollback);
+
     //todo atana test unlock and interest invalid transacitons
 
 #else

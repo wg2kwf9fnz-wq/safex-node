@@ -984,60 +984,65 @@ void BlockchainLMDB::remove_transaction_data(const crypto::hash& tx_hash, const 
       throw1(DB_ERROR("Failed to add removal of tx index to db transaction"));
 }
 
-void BlockchainLMDB::remove_unstake_token(const crypto::hash& tx_hash, const transaction& tx)
+void BlockchainLMDB::remove_unstake_token(
+        const crypto::hash& tx_hash,
+        const transaction& tx)
 {
+    LOG_PRINT_L3("BlockchainLMDB::" << __func__);
+    check_open();
 
-  for (const txin_v& tx_input : tx.vin)
-  {
-    if (tx_input.type() == typeid(txin_to_script))
+    // pop_block() removes the block before removing its transactions,
+    // so height() no longer represents the original unstake height.
+    // The transaction index still contains that original height here.
+    const uint64_t unstake_height = get_tx_block_height(tx_hash);
+
+    const uint64_t unstake_interval =
+            safex::calculate_interval_for_height(
+                    unstake_height,
+                    m_nettype);
+
+    if (unstake_interval == 0)
+        throw1(DB_ERROR("Invalid unstake interval during rollback"));
+
+    // Forward unstake modifies the snapshot for the interval
+    // immediately preceding the interval containing the unstake.
+    const uint64_t affected_interval = unstake_interval - 1;
+
+    for (const txin_v& tx_input : tx.vin)
     {
-      auto input = boost::get<txin_to_script>(tx_input);
-      if(input.command_type == safex::command_t::token_unstake)
-        update_current_staked_token_sum(input.token_amount, +1);
+        if (tx_input.type() != typeid(txin_to_script))
+            continue;
+
+        const auto& input =
+                boost::get<txin_to_script>(tx_input);
+
+        if (input.command_type != safex::command_t::token_unstake)
+            continue;
+
+        // get_staked_token_sum_for_interval(N) reads snapshot N - 1.
+        const uint64_t previous_interval_end_sum =
+                get_staked_token_sum_for_interval(
+                        affected_interval + 1);
+
+        const uint64_t restored_interval_end_sum =
+                previous_interval_end_sum + input.token_amount;
+
+        if (restored_interval_end_sum < previous_interval_end_sum)
+        {
+            throw1(DB_ERROR(
+                    "Staked token interval sum overflow during unstake rollback"));
+        }
+
+        // Reverse the current-stake reduction performed by token_unstake.
+        update_current_staked_token_sum(
+                input.token_amount,
+                +1);
+
+        // Reverse the historical interval snapshot reduction.
+        update_staked_token_for_interval(
+                affected_interval,
+                restored_interval_end_sum);
     }
-  }
-
-
-//  int result;
-
-//  LOG_PRINT_L3("BlockchainLMDB::" << __func__);
-//  check_open();
-
-//  mdb_txn_cursors *m_cursors = &m_wcursors;
-//  CURSOR(tx_indices)
-//  CURSOR(txs)
-//  CURSOR(tx_outputs)
-
-//  MDB_val_set(val_h, tx_hash);
-
-//  if (mdb_cursor_get(m_cur_tx_indices, (MDB_val *)&zerokval, &val_h, MDB_GET_BOTH))
-//      throw1(TX_DNE("Attempting to remove transaction that isn't in the db"));
-//  txindex *tip = (txindex *)val_h.mv_data;
-//  MDB_val_set(val_tx_id, tip->data.tx_id);
-
-//  if ((result = mdb_cursor_get(m_cur_txs, &val_tx_id, NULL, MDB_SET)))
-//      throw1(DB_ERROR(lmdb_error("Failed to locate tx for removal: ", result).c_str()));
-//  result = mdb_cursor_del(m_cur_txs, 0);
-//  if (result)
-//      throw1(DB_ERROR(lmdb_error("Failed to add removal of tx to db transaction: ", result).c_str()));
-
-//  remove_tx_outputs(tip->data.tx_id, tx);
-
-//  result = mdb_cursor_get(m_cur_tx_outputs, &val_tx_id, NULL, MDB_SET);
-//  if (result == MDB_NOTFOUND)
-//    LOG_PRINT_L1("tx has no outputs to remove: " << tx_hash);
-//  else if (result)
-//    throw1(DB_ERROR(lmdb_error("Failed to locate tx outputs for removal: ", result).c_str()));
-//  if (!result)
-//  {
-//    result = mdb_cursor_del(m_cur_tx_outputs, 0);
-//    if (result)
-//      throw1(DB_ERROR(lmdb_error("Failed to add removal of tx outputs to db transaction: ", result).c_str()));
-//  }
-
-//  // Don't delete the tx_indices entry until the end, after we're done with val_tx_id
-//  if (mdb_cursor_del(m_cur_tx_indices, 0))
-//      throw1(DB_ERROR("Failed to add removal of tx index to db transaction"));
 }
 
 uint64_t BlockchainLMDB::add_token_output(const tx_out& tx_output, const uint64_t unlock_time, const uint64_t total_output_number)
