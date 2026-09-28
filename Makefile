@@ -125,7 +125,7 @@ release-all:
 
 release-static:
 	mkdir -p build/release
-	cd build/release && cmake -D STATIC=ON -D Protobuf_USE_STATIC_LIBS=ON -D BUILD_SAFEX_PROTOBUF_RPC=ON -D ARCH="x86-64" -D BUILD_64=ON -D CMAKE_BUILD_TYPE=release ../.. && $(MAKE)
+	cd build/release && cmake -D OPENSSL_ROOT_DIR=/opt/openssl-${OPENSSL_VERSION} -D OPENSSL_INCLUDE_DIR=/opt/openssl-${OPENSSL_VERSION}/include -D OPENSSL_CRYPTO_LIBRARY=/opt/openssl-${OPENSSL_VERSION}/lib/libcrypto.a -D OPENSSL_SSL_LIBRARY=/opt/openssl-${OPENSSL_VERSION}/lib/libssl.a -D STATIC=ON -D Protobuf_USE_STATIC_LIBS=ON -D BUILD_SAFEX_PROTOBUF_RPC=ON -D ARCH="x86-64" -D BUILD_64=ON -D CMAKE_BUILD_TYPE=release ../.. && $(MAKE)
 
 dist-static:
 	mkdir -p build/dist

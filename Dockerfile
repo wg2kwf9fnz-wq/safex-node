@@ -25,7 +25,7 @@ WORKDIR /usr/local
 ARG BOOST_VERSION=1_66_0
 ARG BOOST_VERSION_DOT=1.66.0
 ARG BOOST_HASH=5721818253e6a0989583192f96782c4a98eb6204965316df9f5ad75819225ca9
-RUN curl -s -L -o  boost_${BOOST_VERSION}.tar.bz2 https://dl.bintray.com/boostorg/release/${BOOST_VERSION_DOT}/source/boost_${BOOST_VERSION}.tar.bz2 \
+RUN curl -s -L -o  boost_${BOOST_VERSION}.tar.bz2 https://archives.boost.io/release/${BOOST_VERSION_DOT}/source/boost_${BOOST_VERSION}.tar.bz2 \
     && echo "${BOOST_HASH} boost_${BOOST_VERSION}.tar.bz2" | sha256sum -c \
     && tar -xvf boost_${BOOST_VERSION}.tar.bz2 \
     && cd boost_${BOOST_VERSION} \
@@ -36,14 +36,27 @@ ENV BOOST_ROOT /usr/local/boost_${BOOST_VERSION}
 # OpenSSL
 ARG OPENSSL_VERSION=1.0.2n
 ARG OPENSSL_HASH=370babb75f278c39e0c50e8c4e7493bc0f18db6867478341a832a982fd15a8fe
-RUN curl -s -O https://www.openssl.org/source/openssl-${OPENSSL_VERSION}.tar.gz \
-    && echo "${OPENSSL_HASH} openssl-${OPENSSL_VERSION}.tar.gz" | sha256sum -c \
+COPY openssl-${OPENSSL_VERSION}.tar.gz /usr/local/
+RUN echo "${OPENSSL_HASH} openssl-${OPENSSL_VERSION}.tar.gz" | sha256sum -c \
     && tar -xzf openssl-${OPENSSL_VERSION}.tar.gz \
     && cd openssl-${OPENSSL_VERSION} \
     && ./Configure linux-x86_64 no-shared --static -fPIC \
     && make build_crypto build_ssl \
-    && make install
-ENV OPENSSL_ROOT_DIR=/usr/local/openssl-${OPENSSL_VERSION}
+    && find /usr/local/openssl-${OPENSSL_VERSION} \( -name ssl.h -o -name libcrypto.a -o -name libssl.a \) -print \
+    && mkdir -p /opt/openssl-${OPENSSL_VERSION}/include /opt/openssl-${OPENSSL_VERSION}/lib \
+    && cp -aL /usr/local/openssl-${OPENSSL_VERSION}/include/openssl /opt/openssl-${OPENSSL_VERSION}/include/ \
+    && cp /usr/local/openssl-${OPENSSL_VERSION}/libcrypto.a /usr/local/openssl-${OPENSSL_VERSION}/libssl.a /opt/openssl-${OPENSSL_VERSION}/lib/ \
+    && echo "=== STAGED OPENSSL ===" \
+    && find /opt/openssl-${OPENSSL_VERSION} -maxdepth 3 -type f -print \
+    && echo "=== END STAGED OPENSSL ==="
+RUN echo "=== GCC HEADER TEST ===" && printf "#include <openssl/ssl.h>\nint main(void){return 0;}\n" > /tmp/test.c && gcc -I/opt/openssl-1.0.2n/include -c /tmp/test.c -o /tmp/test.o && echo "=== GCC HEADER TEST PASSED ==="
+
+ENV OPENSSL_ROOT_DIR=/opt/openssl-${OPENSSL_VERSION}
+ENV C_INCLUDE_PATH=/opt/openssl-${OPENSSL_VERSION}/include
+ENV CPLUS_INCLUDE_PATH=/opt/openssl-${OPENSSL_VERSION}/include
+ENV CPPFLAGS="-I/opt/openssl-${OPENSSL_VERSION}/include"
+ENV CFLAGS="-I/opt/openssl-${OPENSSL_VERSION}/include"
+ENV CXXFLAGS="-I/opt/openssl-${OPENSSL_VERSION}/include"
 
 # ZMQ
 ARG ZMQ_VERSION=v4.2.3
@@ -104,10 +117,12 @@ RUN set -ex \
 
 WORKDIR /src
 COPY . .
+RUN git apply safex-7.0.3-compat.patch &&     sed -i '/include_directories(SYSTEM ${OPENSSL_INCLUDE_DIR})/a include_directories(BEFORE /opt/openssl-1.0.2n/include)' external/unbound/CMakeLists.txt
+RUN echo "=== FINDING SSL HEADER ===" && find /usr/local/openssl-1.0.2n /opt/openssl-1.0.2n -name ssl.h -print && echo "=== FINDING OPENSSL LIBS ===" && find /usr/local/openssl-1.0.2n /opt/openssl-1.0.2n \( -name libcrypto.a -o -name libssl.a \) -print
 
 ARG NPROC
 RUN rm -rf build && \
-    if [ -z "$NPROC" ];then make -j$(nproc) release-static;else make -j$NPROC release-static;fi
+    if [ -z "$NPROC" ];then make VERBOSE=1 -j1 release-static;else make VERBOSE=1 -j1 release-static;fi
 
 # runtime stage
 FROM ubuntu:18.04
@@ -130,4 +145,4 @@ VOLUME /wallet
 EXPOSE 17401
 EXPOSE 17402
 
-ENTRYPOINT ["safexd", "--p2p-bind-ip=0.0.0.0", "--p2p-bind-port=17402", "--rpc-bind-ip=0.0.0.0", "--rpc-bind-port=17402", "--non-interactive", "--confirm-external-bind"]
+ENTRYPOINT ["safexd"]

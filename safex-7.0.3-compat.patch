@@ -1,0 +1,68 @@
+diff --git a/contrib/epee/include/console_handler.h b/contrib/epee/include/console_handler.h
+index 4ea3fa5..466855e 100644
+--- a/contrib/epee/include/console_handler.h
++++ b/contrib/epee/include/console_handler.h
+@@ -1,3 +1,5 @@
++#include <boost/bind/bind.hpp>
++using namespace boost::placeholders;
+ // Copyright (c) 2006-2013, Andrey N. Sabelnikov, www.sabelnikov.net
+ // All rights reserved.
+ //
+diff --git a/contrib/epee/include/net/abstract_tcp_server2.inl b/contrib/epee/include/net/abstract_tcp_server2.inl
+index 07b7dc4..06da7fe 100644
+--- a/contrib/epee/include/net/abstract_tcp_server2.inl
++++ b/contrib/epee/include/net/abstract_tcp_server2.inl
+@@ -1,3 +1,5 @@
++#include <boost/bind/bind.hpp>
++using namespace boost::placeholders;
+ /**
+ @file
+ @author from CrypoNote (see copyright below; Andrey N. Sabelnikov)
+diff --git a/contrib/epee/include/storages/levin_abstract_invoke2.h b/contrib/epee/include/storages/levin_abstract_invoke2.h
+index 790c6fa..315ece4 100644
+--- a/contrib/epee/include/storages/levin_abstract_invoke2.h
++++ b/contrib/epee/include/storages/levin_abstract_invoke2.h
+@@ -1,3 +1,5 @@
++#include <boost/bind/bind.hpp>
++using namespace boost::placeholders;
+ // Copyright (c) 2006-2013, Andrey N. Sabelnikov, www.sabelnikov.net
+ // All rights reserved.
+ // 
+diff --git a/contrib/epee/include/storages/portable_storage.h b/contrib/epee/include/storages/portable_storage.h
+index 2023e2f..53ff4a3 100644
+--- a/contrib/epee/include/storages/portable_storage.h
++++ b/contrib/epee/include/storages/portable_storage.h
+@@ -29,6 +29,9 @@
+ #pragma once 
+ 
+ #include "misc_language.h"
++#include <boost/mpl/aux_/na.hpp>
++#include <boost/mpl/arg.hpp>
++#include <boost/mpl/bind.hpp>
+ #include "portable_storage_base.h"
+ #include "portable_storage_to_bin.h"
+ #include "portable_storage_from_bin.h"
+diff --git a/src/checkpoints/checkpoints.cpp b/src/checkpoints/checkpoints.cpp
+index 958920a..7bffa0e 100644
+--- a/src/checkpoints/checkpoints.cpp
++++ b/src/checkpoints/checkpoints.cpp
+@@ -30,8 +30,10 @@
+ // Parts of this file are originally copyright (c) 2014-2018 The Monero Project
+ 
+ #include "include_base_utils.h"
++#include <boost/bind/bind.hpp>
+ 
+ using namespace epee;
++using namespace boost::placeholders;
+ 
+ #include "checkpoints.h"
+ 
+diff --git a/src/device/device_default.hpp b/src/device/device_default.hpp
+index 04cbf97..df6d145 100644
+--- a/src/device/device_default.hpp
++++ b/src/device/device_default.hpp
+@@ -1,3 +1,4 @@
++#include <map>
+ // Copyright (c) 2018, The Safex Project
+ // 
+ // All rights reserved.
