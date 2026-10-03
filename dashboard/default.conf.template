@@ -1,0 +1,41 @@
+# Rendered by the nginx image's envsubst at start-up (STRATUM_API_TOKEN, NGINX_LOCAL_RESOLVERS).
+server {
+    listen 80;
+    server_name _;
+
+    # Docker's embedded DNS. Upstreams are resolved per request (variables below) so nginx
+    # still starts if the node or stratum container is not up yet.
+    resolver ${NGINX_LOCAL_RESOLVERS} valid=10s ipv6=off;
+
+    root /usr/share/nginx/html;
+    index index.html;
+
+    add_header Cache-Control "no-store" always;
+
+    location / {
+        try_files $uri /index.html;
+    }
+
+    # Anything else under the API prefixes is an error, not the page.
+    location /api/ { return 404; }
+    location /stratum-api/ { return 404; }
+
+    location = /api/get_info {
+        set $node_upstream http://node:17402;
+        proxy_pass $node_upstream/get_info;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_read_timeout 10s;
+    }
+
+    # Stratum (xmrig-proxy) HTTP API. The token never reaches the browser: nginx adds it.
+    # The page itself sits behind Umbrel's app_proxy login.
+    location ~ ^/stratum-api/1/(summary|workers|config)$ {
+        set $stratum_upstream http://stratum:8080;
+        proxy_pass $stratum_upstream/1/$1;
+        proxy_http_version 1.1;
+        proxy_set_header Authorization "Bearer ${STRATUM_API_TOKEN}";
+        proxy_set_header Content-Type "application/json";
+        proxy_read_timeout 10s;
+    }
+}
