@@ -1,11 +1,11 @@
-# Rendered by the nginx image's envsubst at start-up (STRATUM_API_TOKEN, NGINX_LOCAL_RESOLVERS).
+# Rendered by the nginx image's envsubst at start-up (STRATUM_API_TOKEN only).
 server {
     listen 80;
     server_name _;
 
-    # Docker's embedded DNS. Upstreams are resolved per request (variables below) so nginx
+    # Docker's embedded DNS (fixed address 127.0.0.11 inside every compose network). Upstreams are resolved per request (variables below) so nginx
     # still starts if the node or stratum container is not up yet.
-    resolver ${NGINX_LOCAL_RESOLVERS} valid=10s ipv6=off;
+    resolver 127.0.0.11 valid=10s ipv6=off;
 
     root /usr/share/nginx/html;
     index index.html;

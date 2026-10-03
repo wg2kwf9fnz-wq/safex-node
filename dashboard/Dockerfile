@@ -4,8 +4,12 @@ FROM nginx:1.27-alpine@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef
 RUN rm -f /etc/nginx/conf.d/default.conf
 COPY default.conf.template /etc/nginx/templates/default.conf.template
 COPY index.html /usr/share/nginx/html/index.html
-# Build-time check: the template must render and pass nginx's own config test.
-RUN STRATUM_API_TOKEN=buildcheck NGINX_LOCAL_RESOLVERS=127.0.0.11 \
-      envsubst '${STRATUM_API_TOKEN} ${NGINX_LOCAL_RESOLVERS}' < /etc/nginx/templates/default.conf.template > /etc/nginx/conf.d/default.conf \
+
+# Build-time check using the image's REAL start-up script, with only the one variable that
+# docker-compose provides (STRATUM_API_TOKEN). Fails the build if any placeholder is left
+# unreplaced or if nginx rejects the rendered config.
+RUN STRATUM_API_TOKEN=buildcheck /docker-entrypoint.d/20-envsubst-on-templates.sh \
+    && ! grep -F '${' /etc/nginx/conf.d/default.conf \
+    && grep -q 'Bearer buildcheck' /etc/nginx/conf.d/default.conf \
     && nginx -t \
     && rm -f /etc/nginx/conf.d/default.conf
