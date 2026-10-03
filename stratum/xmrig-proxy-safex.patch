@@ -1,0 +1,257 @@
+diff --git a/src/base/crypto/Coin.cpp b/src/base/crypto/Coin.cpp
+index 85cc605..37135d5 100644
+--- a/src/base/crypto/Coin.cpp
++++ b/src/base/crypto/Coin.cpp
+@@ -55,6 +55,7 @@ static const CoinInfo coinInfo[] = {
+     { Algorithm::RX_0,            "ZEPH",     "Zephyr",       120,    1000000000000,  BLUE_BG_BOLD(   WHITE_BOLD_S " zephyr  ") },
+     { Algorithm::RX_0,            "Townforge","Townforge",    30,     100000000,      MAGENTA_BG_BOLD(WHITE_BOLD_S " townforge ") },
+     { Algorithm::RX_YADA,         "YDA",      "YadaCoin",     120,    100000000,      BLUE_BG_BOLD(   WHITE_BOLD_S " yada    ") },
++    { Algorithm::RX_SFX,          "SFX",      "Safex",        120,    10000000000,    GREEN_BG_BOLD(  WHITE_BOLD_S " safex   ") },
+ };
+ 
+ 
+diff --git a/src/base/crypto/Coin.h b/src/base/crypto/Coin.h
+index c3c97fd..38f5cea 100644
+--- a/src/base/crypto/Coin.h
++++ b/src/base/crypto/Coin.h
+@@ -41,6 +41,7 @@ public:
+         ZEPHYR,
+         TOWNFORGE,
+         YADA,
++        SAFEX,
+         MAX
+     };
+ 
+diff --git a/src/base/net/stratum/DaemonClient.cpp b/src/base/net/stratum/DaemonClient.cpp
+index f8e2bd6..3b57352 100644
+--- a/src/base/net/stratum/DaemonClient.cpp
++++ b/src/base/net/stratum/DaemonClient.cpp
+@@ -413,6 +413,7 @@ bool xmrig::DaemonClient::parseJob(const rapidjson::Value &params, int *code)
+         m_blocktemplate.minerTxMerkleTreePath(),
+         m_blocktemplate.outputType() == 3
+     );
++    job.setMinerTxV1(m_coin == Coin::SAFEX);
+ #   endif
+ 
+     m_blockhashingblob = Json::getString(params, kBlockhashingBlob);
+@@ -557,6 +558,12 @@ int64_t xmrig::DaemonClient::getBlockTemplate()
+     params.AddMember("wallet_address", m_user.toJSON(), allocator);
+     params.AddMember("extra_nonce", Cvt::toHex(Cvt::randomBytes(kBlobReserveSize)).toJSON(doc), allocator);
+ 
++    // Safex daemon predates the "extra_nonce" parameter and only understands
++    // "reserve_size"; without it there is no room in tx_extra for the proxy's nonce.
++    if (m_coin == Coin::SAFEX) {
++        params.AddMember("reserve_size", static_cast<uint64_t>(kBlobReserveSize), allocator);
++    }
++
+     JsonRequest::create(doc, m_sequence, "getblocktemplate", params);
+ 
+     return rpcSend(doc);
+diff --git a/src/base/net/stratum/Job.cpp b/src/base/net/stratum/Job.cpp
+index c152761..ae5843f 100644
+--- a/src/base/net/stratum/Job.cpp
++++ b/src/base/net/stratum/Job.cpp
+@@ -271,6 +271,7 @@ void xmrig::Job::copy(const Job &other)
+     m_minerTxMerkleTreeBranch = other.m_minerTxMerkleTreeBranch;
+     m_minerTxMerkleTreePath = other.m_minerTxMerkleTreePath;
+     m_hasViewTag = other.m_hasViewTag;
++    m_minerTxV1 = other.m_minerTxV1;
+ #   else
+     memcpy(m_ephPublicKey, other.m_ephPublicKey, sizeof(m_ephPublicKey));
+     memcpy(m_ephSecretKey, other.m_ephSecretKey, sizeof(m_ephSecretKey));
+@@ -328,6 +329,7 @@ void xmrig::Job::move(Job &&other)
+     m_minerTxMerkleTreeBranch   = std::move(other.m_minerTxMerkleTreeBranch);
+     m_minerTxMerkleTreePath     = other.m_minerTxMerkleTreePath;
+     m_hasViewTag                = other.m_hasViewTag;
++    m_minerTxV1                 = other.m_minerTxV1;
+ #   else
+     memcpy(m_ephPublicKey, other.m_ephPublicKey, sizeof(m_ephPublicKey));
+     memcpy(m_ephSecretKey, other.m_ephSecretKey, sizeof(m_ephSecretKey));
+@@ -404,7 +406,7 @@ void xmrig::Job::generateHashingBlob(String &blob) const
+ {
+     uint8_t root_hash[32];
+     const uint8_t* p = m_minerTxPrefix.data();
+-    BlockTemplate::calculateRootHash(p, p + m_minerTxPrefix.size(), m_minerTxMerkleTreeBranch, m_minerTxMerkleTreePath, root_hash);
++    BlockTemplate::calculateRootHash(p, p + m_minerTxPrefix.size(), m_minerTxMerkleTreeBranch, m_minerTxMerkleTreePath, root_hash, m_minerTxV1);
+ 
+     uint64_t root_hash_offset = nonceOffset() + nonceSize();
+ 
+diff --git a/src/base/net/stratum/Job.h b/src/base/net/stratum/Job.h
+index d5967c7..d97ae77 100644
+--- a/src/base/net/stratum/Job.h
++++ b/src/base/net/stratum/Job.h
+@@ -119,6 +119,7 @@ public:
+ 
+ #   ifdef XMRIG_PROXY_PROJECT
+     inline bool hasViewTag() const                      { return m_hasViewTag; }
++    inline void setMinerTxV1(bool v1)                   { m_minerTxV1 = v1; }
+ 
+     void setSpendSecretKey(const uint8_t* key);
+     void setMinerTx(const uint8_t* begin, const uint8_t* end, size_t minerTxEphPubKeyOffset, size_t minerTxPubKeyOffset, size_t minerTxExtraNonceOffset, size_t minerTxExtraNonceSize, const Buffer& minerTxMerkleTreeBranch, uint32_t minerTxMerkleTreePath, bool hasViewTag);
+@@ -181,6 +182,7 @@ private:
+     Buffer m_minerTxMerkleTreeBranch;
+     uint32_t m_minerTxMerkleTreePath = 0;
+     bool m_hasViewTag = false;
++    bool m_minerTxV1 = false;
+ #   else
+     // Miner signatures
+     uint8_t m_ephPublicKey[32]{};
+diff --git a/src/base/tools/cryptonote/BlockTemplate.cpp b/src/base/tools/cryptonote/BlockTemplate.cpp
+index 5493336..3a09072 100644
+--- a/src/base/tools/cryptonote/BlockTemplate.cpp
++++ b/src/base/tools/cryptonote/BlockTemplate.cpp
+@@ -25,8 +25,15 @@
+ #include "base/tools/Cvt.h"
+ 
+ 
+-void xmrig::BlockTemplate::calculateMinerTxHash(const uint8_t *prefix_begin, const uint8_t *prefix_end, uint8_t *hash)
++void xmrig::BlockTemplate::calculateMinerTxHash(const uint8_t *prefix_begin, const uint8_t *prefix_end, uint8_t *hash, bool tx_v1)
+ {
++    // Safex (and other v1-transaction CryptoNote chains): the miner tx has no RingCT
++    // section, so its hash is simply keccak over the serialized transaction (= prefix).
++    if (tx_v1) {
++        keccak(prefix_begin, static_cast<int>(prefix_end - prefix_begin), hash, kHashSize);
++        return;
++    }
++
+     uint8_t hashes[kHashSize * 3];
+ 
+     // Calculate 3 partial hashes
+@@ -48,9 +55,9 @@ void xmrig::BlockTemplate::calculateMinerTxHash(const uint8_t *prefix_begin, con
+ }
+ 
+ 
+-void xmrig::BlockTemplate::calculateRootHash(const uint8_t *prefix_begin, const uint8_t *prefix_end, const Buffer &miner_tx_merkle_tree_branch, uint32_t miner_tx_merkle_tree_path, uint8_t *root_hash)
++void xmrig::BlockTemplate::calculateRootHash(const uint8_t *prefix_begin, const uint8_t *prefix_end, const Buffer &miner_tx_merkle_tree_branch, uint32_t miner_tx_merkle_tree_path, uint8_t *root_hash, bool tx_v1)
+ {
+-    calculateMinerTxHash(prefix_begin, prefix_end, root_hash);
++    calculateMinerTxHash(prefix_begin, prefix_end, root_hash, tx_v1);
+ 
+     const size_t depth = miner_tx_merkle_tree_branch.size() / kHashSize;
+ 
+@@ -258,6 +265,44 @@ bool xmrig::BlockTemplate::parse(bool hashes)
+     ar(m_height);
+     ar(m_numOutputs);
+ 
++    const bool is_fcmp_pp = (m_coin == Coin::MONERO) && (m_version.first >= 17);
++
++    if (m_coin == Coin::SAFEX) {
++        // Safex miner tx (tx version 1): the block reward is decomposed into up to
++        // HF_VERSION_MINER_TX_MAX_OUTS (11) outputs. Each output is serialized as
++        //   varint amount, varint token_amount, uint8 type (2 = txout_to_key), 32-byte key
++        if (m_txVersion != 1 || m_numOutputs < 1 || m_numOutputs > 16) {
++            return false;
++        }
++
++        for (uint64_t k = 0; k < m_numOutputs; ++k) {
++            uint64_t amount;
++            uint64_t token_amount;
++            uint8_t output_type;
++
++            ar(amount);
++            ar(token_amount);
++            ar(output_type);
++
++            if (output_type != 2 || token_amount != 0) {
++                return false;
++            }
++
++            if (k == 0) {
++                m_amount     = amount;
++                m_outputType = output_type;
++                setOffset(EPH_PUBLIC_KEY_OFFSET, ar.index());
++                ar(m_ephPublicKey, kKeySize);
++            }
++            else {
++                Span key;
++                ar(key, kKeySize);
++                m_amount += amount;
++            }
++        }
++    }
++    else {
++
+     if (m_coin == Coin::ZEPHYR) {
+         if (m_numOutputs < 2) {
+             return false;
+@@ -270,8 +315,6 @@ bool xmrig::BlockTemplate::parse(bool hashes)
+     ar(m_amount);
+     ar(m_outputType);
+ 
+-    const bool is_fcmp_pp = (m_coin == Coin::MONERO) && (m_version.first >= 17);
+-
+     // output type must be txout_to_key (2) or txout_to_tagged_key (3) for versions < 17, and txout_to_carrot_v1 (0) for version FCMP++
+     if (is_fcmp_pp && (m_outputType == 0)) {
+         // all good
+@@ -323,6 +366,8 @@ bool xmrig::BlockTemplate::parse(bool hashes)
+         ar(m_viewTag);
+     }
+ 
++    } // !Coin::SAFEX
++
+     if (m_coin == Coin::TOWNFORGE) {
+       ar(m_unlockTime);
+     }
+@@ -378,6 +423,10 @@ bool xmrig::BlockTemplate::parse(bool hashes)
+     setOffset(MINER_TX_PREFIX_END_OFFSET, ar.index());
+     // Prefix end
+ 
++    // Safex: v1 transaction, no RingCT section and no signatures for txin_gen,
++    // so the serialized miner tx ends right after tx_extra.
++    if (m_coin != Coin::SAFEX) {
++
+     // RCT signatures (empty in miner transaction)
+     uint8_t vin_rct_type = 0;
+     ar(vin_rct_type);
+@@ -400,6 +449,8 @@ bool xmrig::BlockTemplate::parse(bool hashes)
+         return false;
+     }
+ 
++    } // !Coin::SAFEX
++
+     // Other transaction hashes
+     ar(m_numHashes);
+ 
+@@ -423,7 +474,7 @@ bool xmrig::BlockTemplate::parse(bool hashes)
+ 
+         uint8_t* data = m_hashes.data() + coinbase_tx_index * kHashSize;
+ 
+-        calculateMinerTxHash(blob(MINER_TX_PREFIX_OFFSET), blob(MINER_TX_PREFIX_END_OFFSET), data);
++        calculateMinerTxHash(blob(MINER_TX_PREFIX_OFFSET), blob(MINER_TX_PREFIX_END_OFFSET), data, m_coin == Coin::SAFEX);
+ 
+         for (uint64_t i = 1; i <= m_numHashes; ++i) {
+             Span h;
+diff --git a/src/base/tools/cryptonote/BlockTemplate.h b/src/base/tools/cryptonote/BlockTemplate.h
+index ebfcc13..9a78d1c 100644
+--- a/src/base/tools/cryptonote/BlockTemplate.h
++++ b/src/base/tools/cryptonote/BlockTemplate.h
+@@ -104,8 +104,8 @@ public:
+         return out;
+     }
+ 
+-    static void calculateMinerTxHash(const uint8_t *prefix_begin, const uint8_t *prefix_end, uint8_t *hash);
+-    static void calculateRootHash(const uint8_t *prefix_begin, const uint8_t *prefix_end, const Buffer &miner_tx_merkle_tree_branch, uint32_t miner_tx_merkle_tree_path, uint8_t *root_hash);
++    static void calculateMinerTxHash(const uint8_t *prefix_begin, const uint8_t *prefix_end, uint8_t *hash, bool tx_v1 = false);
++    static void calculateRootHash(const uint8_t *prefix_begin, const uint8_t *prefix_end, const Buffer &miner_tx_merkle_tree_branch, uint32_t miner_tx_merkle_tree_path, uint8_t *root_hash, bool tx_v1 = false);
+ 
+     bool parse(const Buffer &blocktemplate, const Coin &coin, bool hashes = kCalcHashes);
+     bool parse(const char *blocktemplate, size_t size, const Coin &coin, bool hashes);
+diff --git a/src/base/tools/cryptonote/WalletAddress.cpp b/src/base/tools/cryptonote/WalletAddress.cpp
+index 3719031..f010bd5 100644
+--- a/src/base/tools/cryptonote/WalletAddress.cpp
++++ b/src/base/tools/cryptonote/WalletAddress.cpp
+@@ -244,6 +244,14 @@ const xmrig::WalletAddress::TagInfo &xmrig::WalletAddress::tagInfo(uint64_t tag)
+         { 0x1a9a,   { Coin::WOWNERO,    MAINNET,    INTEGRATED,     34568,  34569 } },
+         { 0x2fb0,   { Coin::WOWNERO,    MAINNET,    SUBADDRESS,     34568,  34569 } },
+ 
++        { 0x10003798,  { Coin::SAFEX,   MAINNET,    PUBLIC,         17401,  17402 } },
++        { 0xa90a03798, { Coin::SAFEX,   MAINNET,    INTEGRATED,     17401,  17402 } },
++        { 0x10e03798,  { Coin::SAFEX,   MAINNET,    SUBADDRESS,     17401,  17402 } },
++
++        { 0x263b16,    { Coin::SAFEX,   TESTNET,    PUBLIC,         29392,  29393 } },
++        { 0xe05fb16,   { Coin::SAFEX,   TESTNET,    INTEGRATED,     29392,  29393 } },
++        { 0x1905fb16,  { Coin::SAFEX,   TESTNET,    SUBADDRESS,     29392,  29393 } },
++
+         { 0x5a,     { Coin::GRAFT,      MAINNET,    PUBLIC,         18981,  18982 } },
+         { 0x5b,     { Coin::GRAFT,      MAINNET,    INTEGRATED,     18981,  18982 } },
+         { 0x66,     { Coin::GRAFT,      MAINNET,    SUBADDRESS,     18981,  18982 } },
