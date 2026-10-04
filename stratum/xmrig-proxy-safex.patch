@@ -23,10 +23,41 @@ index c3c97fd..38f5cea 100644
      };
  
 diff --git a/src/base/net/stratum/DaemonClient.cpp b/src/base/net/stratum/DaemonClient.cpp
-index f8e2bd6..3b57352 100644
+index f8e2bd6..a80acc5 100644
 --- a/src/base/net/stratum/DaemonClient.cpp
 +++ b/src/base/net/stratum/DaemonClient.cpp
-@@ -413,6 +413,7 @@ bool xmrig::DaemonClient::parseJob(const rapidjson::Value &params, int *code)
+@@ -54,6 +54,7 @@
+ 
+ 
+ #include <algorithm>
++#include <cinttypes>
+ #include <cassert>
+ #include <random>
+ 
+@@ -400,7 +401,21 @@ bool xmrig::DaemonClient::parseJob(const rapidjson::Value &params, int *code)
+         return jobError("Invalid block template received from daemon.");
+     }
+ 
+-#   ifdef XMRIG_PROXY_PROJECT
++    printf(
++        "SAFEX DEBUG: k=%zu end=%zu extra=%zu extra_rel=%zu extra_size=%zu merkle_path=%u branch_size=%zu output_type=%llu\n",
++        m_blocktemplate.offset(BlockTemplate::MINER_TX_PREFIX_OFFSET),
++        m_blocktemplate.offset(BlockTemplate::MINER_TX_PREFIX_END_OFFSET),
++        m_blocktemplate.offset(BlockTemplate::TX_EXTRA_NONCE_OFFSET),
++        m_blocktemplate.offset(BlockTemplate::TX_EXTRA_NONCE_OFFSET) -
++            m_blocktemplate.offset(BlockTemplate::MINER_TX_PREFIX_OFFSET),
++        m_blocktemplate.txExtraNonce().size(),
++        m_blocktemplate.minerTxMerkleTreePath(),
++        m_blocktemplate.minerTxMerkleTreeBranch().size(),
++        static_cast<unsigned long long>(m_blocktemplate.outputType())
++    );
++
++
++#ifdef XMRIG_PROXY_PROJECT
+     const size_t k = m_blocktemplate.offset(BlockTemplate::MINER_TX_PREFIX_OFFSET);
+     job.setMinerTx(
+         m_blocktemplate.blob() + k,
+@@ -413,6 +428,7 @@ bool xmrig::DaemonClient::parseJob(const rapidjson::Value &params, int *code)
          m_blocktemplate.minerTxMerkleTreePath(),
          m_blocktemplate.outputType() == 3
      );
@@ -34,7 +65,23 @@ index f8e2bd6..3b57352 100644
  #   endif
  
      m_blockhashingblob = Json::getString(params, kBlockhashingBlob);
-@@ -557,6 +558,12 @@ int64_t xmrig::DaemonClient::getBlockTemplate()
+@@ -535,7 +551,15 @@ bool xmrig::DaemonClient::parseResponse(int64_t id, const rapidjson::Value &resu
+ 
+     const char* error_msg = nullptr;
+ 
++    // Safex: the daemon accepted a block submitted by one of our miners.
++    // Machine-readable line, parsed by the stratum gateway to record blocks found per address.
++    const uint64_t blockHeight = m_job.height();
++    const bool blockAccepted = m_results.find(id) != m_results.end();
++
+     if (handleSubmitResponse(id, error_msg)) {
++        if (blockAccepted && !error_msg) {
++            LOG_INFO("BLOCK_FOUND height=%" PRIu64, blockHeight);
++        }
+         if (error_msg || (m_pool.zmq_port() < 0)) {
+             getBlockTemplate();
+         }
+@@ -557,6 +581,12 @@ int64_t xmrig::DaemonClient::getBlockTemplate()
      params.AddMember("wallet_address", m_user.toJSON(), allocator);
      params.AddMember("extra_nonce", Cvt::toHex(Cvt::randomBytes(kBlobReserveSize)).toJSON(doc), allocator);
  

@@ -24,23 +24,27 @@
     .muted { color: #888; font-size: 13px; line-height: 1.5; }
     input[type=text] { width: 100%; box-sizing: border-box; padding: 10px; border-radius: 8px; border: 1px solid #333; background: #111; color: #eee; font-family: ui-monospace, monospace; font-size: 13px; }
     input[type=text]:focus { outline: 1px solid #4caf50; }
-    button { margin-top: 10px; padding: 10px 18px; border: 0; border-radius: 8px; background: #4caf50; color: #111; font-weight: 600; cursor: pointer; }
-    button:disabled { opacity: .5; cursor: default; }
-    table { width: 100%; border-collapse: collapse; font-size: 14px; }
-    th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #2a2a2a; }
+    table { width: 100%; border-collapse: collapse; font-size: 14px; min-width: 560px; }
+    th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #2a2a2a; white-space: nowrap; }
     th { color: #999; font-weight: 500; }
-    code { background: #111; padding: 2px 6px; border-radius: 4px; }
-    .walletbox.needs { outline: 2px solid #fb3; }
+    code { background: #111; padding: 2px 6px; border-radius: 4px; word-break: break-all; }
     .tablewrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
-    table { min-width: 520px; }
-    td, th { white-space: nowrap; }
-    code { word-break: break-all; }
+    .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; background: #555; }
+    .dot.on { background: #4caf50; }
+    .you { color: #4caf50; font-size: 12px; margin-left: 6px; }
+    /* blocks-per-address chart */
+    .chartrow { display: grid; grid-template-columns: 130px 1fr 36px; align-items: center; gap: 10px; margin: 8px 0; font-size: 14px; }
+    .chartrow .name { font-family: ui-monospace, monospace; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .chartrow .track { background: #2a2a2a; border-radius: 6px; height: 22px; overflow: hidden; }
+    .chartrow .fill { height: 100%; background: linear-gradient(90deg, #2478dc, #4aa3f5); min-width: 0; transition: width .4s; }
+    .chartrow .num { text-align: right; font-weight: 600; }
     @media (max-width: 600px) {
       body { padding: 16px; }
       h1 { font-size: 24px; }
       .card { padding: 16px; }
       .value { font-size: 20px; }
       .grid { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+      .chartrow { grid-template-columns: 100px 1fr 30px; gap: 8px; }
     }
   </style>
 </head>
@@ -69,20 +73,18 @@
     <h2>Solo Mining (Stratum)</h2>
     <div id="miningStatus" class="status">Connecting to stratum server...</div>
 
-    <div id="walletBox" class="card walletbox">
-      <div class="label">Payout wallet — block rewards found by your miners are paid to this Safex address</div>
-      <div id="currentWallet" class="muted" style="margin-bottom:8px"></div>
-      <input id="wallet" type="text" placeholder="Safex5..." spellcheck="false" autocomplete="off">
-      <button id="saveWallet">Save wallet</button>
-      <span id="walletMsg" class="muted"></span>
-    </div>
-
-    <div class="card wide">
-      <div class="label">Connect your miners</div>
+    <div class="card">
+      <div class="label">Connect a miner &mdash; everyone mines to their own address</div>
       <div class="value small" id="stratumUrl">stratum+tcp://—:17404</div>
+      <p class="muted" style="margin-bottom:6px">Your Safex address (only used to build the command below, it is not sent anywhere):</p>
+      <input id="myaddr" type="text" placeholder="Safex5..." spellcheck="false" autocomplete="off">
+      <p class="muted"><code id="xmrigCmd">xmrig -a rx/sfx -o HOST:17404 -u YOUR_SAFEX_ADDRESS.rig1 -p x</code>
+        <button id="copyCmd" type="button" style="margin-left:8px;padding:4px 10px;border:0;border-radius:6px;background:#4caf50;color:#111;font-weight:600;cursor:pointer">Copy</button>
+        <span id="copyMsg" class="ok"></span></p>
       <p class="muted">
-        XMRig example: <code id="xmrigCmd">xmrig -a rx/sfx -o HOST:17404 -u rig1 -p x</code><br>
-        Default share difficulty is 50,000 (roughly one share every 10 seconds per 5 kH/s). Pick another per worker through the username, e.g. <code>rig1+200000</code>; use a higher value for big rented rigs.
+        The username is your <b>Safex address</b>, optionally followed by <code>.workername</code> and <code>+difficulty</code>
+        (e.g. <code>Safex5...abc.rig1+200000</code>; default difficulty is 50,000). If one of your miners finds a block, the
+        <b>whole block reward goes to your address</b>. This is solo mining: no pool, no fees, no payouts to manage.
         For miners outside your home network (e.g. MiningRigRentals) forward TCP port 17404 on your router to this Umbrel.
         Algorithm: <b>RandomSFX (rx/sfx)</b>.
       </p>
@@ -92,12 +94,19 @@
       <div class="card"><div class="label">Hashrate (10 min)</div><div id="hr" class="value">—</div></div>
       <div class="card"><div class="label">Miners connected</div><div id="miners" class="value">—</div></div>
       <div class="card"><div class="label">Shares accepted / rejected</div><div id="shares" class="value">—</div></div>
-      <div class="card"><div class="label">Est. time to find a block</div><div id="ttf" class="value">—</div></div>
+      <div class="card"><div class="label">Est. time to next block (all miners)</div><div id="ttf" class="value">—</div></div>
       <div class="card"><div class="label">Share of network hashrate</div><div id="netShare" class="value">—</div></div>
+      <div class="card"><div class="label">Blocks found (all addresses)</div><div id="blocksTotal" class="value">—</div></div>
     </div>
 
     <div class="card wide">
-      <div class="label">Workers</div>
+      <div class="label">Blocks found per address</div>
+      <div id="chart"><div class="muted">No miners yet</div></div>
+      <div id="recent" class="muted" style="margin-top:12px"></div>
+    </div>
+
+    <div class="card wide">
+      <div class="label">Workers (hidden after <span id="ttl">12</span> hours without a share)</div>
       <div class="tablewrap"><table>
         <thead><tr><th>Worker</th><th>IP</th><th>Accepted</th><th>Rejected</th><th>Hashrate (10m)</th><th>Last share</th></tr></thead>
         <tbody id="workers"><tr><td colspan="6" class="muted">No workers yet</td></tr></tbody>
@@ -107,17 +116,9 @@
 
   <script>
     const $ = (id) => document.getElementById(id);
-    const PLACEHOLDER = 'SET_YOUR_SAFEX_WALLET_ADDRESS';
+    const ADDR_RE = /^Safex[1-9A-HJ-NP-Za-km-z]{90,110}$/;
     let lastDifficulty = 0;
     let lastNetHash = 0;
-    let walletSet = false;
-
-    // Condense long strings: Safex addresses become "Safex.....34e2N"; other long names are truncated in the middle.
-    function shorten(s) {
-      s = String(s);
-      if (/^Safex[1-9A-HJ-NP-Za-km-z]{40,}$/.test(s)) return s.slice(0, 5) + '.....' + s.slice(-5);
-      return s.length > 24 ? s.slice(0, 12) + '...' + s.slice(-6) : s;
-    }
 
     function fmtHash(h) {
       if (!h || !isFinite(h)) return '0 H/s';
@@ -131,8 +132,24 @@
       if (s < 172800) return (s / 3600).toFixed(1) + ' hours';
       return (s / 86400).toFixed(1) + ' days';
     }
+    function ago(ts) {
+      if (!ts) return '—';
+      const s = Math.max(0, Date.now() / 1000 - ts);
+      if (s < 90) return Math.round(s) + 's ago';
+      if (s < 5400) return Math.round(s / 60) + ' min ago';
+      if (s < 172800) return (s / 3600).toFixed(1) + ' h ago';
+      return Math.round(s / 86400) + ' d ago';
+    }
     function esc(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
     function setHtml(id, html) { $(id).innerHTML = html; }
+    // Safex addresses are shown condensed: Safex.....34e2N
+    function shorten(s) {
+      s = String(s);
+      if (/^Safex[1-9A-HJ-NP-Za-km-z]{40,}$/.test(s)) return s.slice(0, 5) + '.....' + s.slice(-5);
+      return s.length > 24 ? s.slice(0, 12) + '...' + s.slice(-6) : s;
+    }
+    function myAddr() { const a = ($('myaddr').value || '').trim(); return ADDR_RE.test(a) ? a : ''; }
+    function youTag(addr) { return addr && addr === myAddr() ? '<span class="you">(you)</span>' : ''; }
 
     async function updateNode() {
       try {
@@ -143,7 +160,7 @@
         $('network').textContent = data.mainnet ? 'Mainnet' : data.testnet ? 'Testnet' : 'Stagenet';
         $('nodeStatus').textContent = data.status;
         $('height').textContent = Number(data.height).toLocaleString();
-        // The node reports target_height = 0 (or a stale lower value) once it is synced; never show it below the current height.
+        // The node reports target_height = 0 once it is synced; never show a target below the current height.
         $('targetHeight').textContent = Math.max(Number(data.target_height) || 0, Number(data.height)).toLocaleString();
         $('incoming').textContent = data.incoming_connections_count;
         $('outgoing').textContent = data.outgoing_connections_count;
@@ -161,85 +178,69 @@
       }
     }
 
-    async function api(path, opts) {
-      const r = await fetch('/stratum-api/1/' + path, Object.assign({ cache: 'no-store' }, opts));
-      if (!r.ok) throw new Error('HTTP ' + r.status);
-      return r.status === 204 ? null : r.json();
+    function renderChart(addresses) {
+      const rows = (addresses || []).filter(a => a.blocks > 0 || a.connected > 0 || a.hashrate > 0);
+      if (!rows.length) { setHtml('chart', '<div class="muted">No miners yet</div>'); return; }
+      const max = Math.max(1, ...rows.map(a => a.blocks));
+      setHtml('chart', rows.map(a =>
+        '<div class="chartrow"><div class="name" title="' + esc(a.address) + '">' + esc(shorten(a.address)) + youTag(a.address) + '</div>' +
+        '<div class="track"><div class="fill" style="width:' + (a.blocks / max * 100) + '%"></div></div>' +
+        '<div class="num">' + a.blocks + '</div></div>').join(''));
     }
-
-    async function loadWallet() {
-      const cfg = await api('config');
-      const user = cfg.pools && cfg.pools[0] ? cfg.pools[0].user : '';
-      walletSet = !!user && user !== PLACEHOLDER;
-      $('walletBox').classList.toggle('needs', !walletSet);
-      setHtml('currentWallet', walletSet
-        ? 'Currently set to: <code title="' + esc(user) + '">' + esc(shorten(user)) + '</code>'
-        : '<span class="warn">No wallet set yet.</span>');
-      $('wallet').placeholder = walletSet ? 'Paste a new Safex address to change it' : 'Safex5...';
-      return user;
-    }
-
-    $('saveWallet').addEventListener('click', async () => {
-      const addr = $('wallet').value.trim();
-      // Safex mainnet standard address: "Safex" + base58, 99-100 characters in total.
-      if (!/^Safex[1-9A-HJ-NP-Za-km-z]{90,110}$/.test(addr)) {
-        setHtml('walletMsg', ' <span class="error">That does not look like a Safex address (it should start with "Safex" and be about 100 characters).</span>');
-        return;
-      }
-      $('saveWallet').disabled = true;
-      setHtml('walletMsg', ' Saving...');
-      try {
-        const cfg = await api('config');
-        cfg.pools[0].user = addr;
-        await api('config', { method: 'PUT', body: JSON.stringify(cfg) });
-        await new Promise(r => setTimeout(r, 1500));
-        await loadWallet();
-        $('wallet').value = '';
-        setHtml('walletMsg', ' <span class="ok">Saved. The stratum server reloaded with your wallet.</span>');
-        updateMining();
-      } catch (e) {
-        setHtml('walletMsg', ' <span class="error">Could not save: ' + esc(e.message) + '</span>');
-      }
-      $('saveWallet').disabled = false;
-    });
 
     async function updateMining() {
       const host = window.location.hostname || 'umbrel.local';
       $('stratumUrl').textContent = 'stratum+tcp://' + host + ':17404';
-      $('xmrigCmd').textContent = 'xmrig -a rx/sfx -o ' + host + ':17404 -u rig1 -p x';
+      const a = myAddr();
+      const cmd = (addr) => 'xmrig -a rx/sfx -o ' + host + ':17404 -u ' + (addr || 'YOUR_SAFEX_ADDRESS') + '.rig1 -p x';
+      $('xmrigCmd').textContent = cmd(a ? shorten(a) : '');   // condensed on screen
+      $('xmrigCmd').dataset.full = cmd(a);                     // full command is what gets copied
+      let s;
       try {
-        const [s] = await Promise.all([api('summary'), loadWallet()]);
-        const up = s.upstreams || {};
-        if (!walletSet) {
-          setHtml('miningStatus', '<span class="warn">Enter your Safex wallet address below to start serving mining jobs.</span>');
-        } else if (up.active > 0) {
-          setHtml('miningStatus', '<span class="ok">Stratum server is up and getting block templates from your node.</span>');
-        } else {
-          setHtml('miningStatus', '<span class="warn">Wallet set. Waiting for block templates from the node (it must be fully synced).</span>');
-        }
-        // xmrig-proxy reports hashrate in kH/s; index 1 = 10 minute average
-        const hr = s.hashrate && s.hashrate.total ? s.hashrate.total[1] * 1000 : 0;
-        $('hr').textContent = fmtHash(hr);
-        $('miners').textContent = s.miners ? s.miners.now : 0;
-        $('ttf').textContent = hr > 0 && lastDifficulty > 0 ? fmtDuration(lastDifficulty / hr) : '—';
-        $('netShare').textContent = hr > 0 && lastNetHash > 0 ? (hr / lastNetHash * 100).toFixed(2) + '%' : '—';
+        const r = await fetch('/stratum-api/state', { cache: 'no-store' });
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        s = await r.json();
       } catch (e) {
         setHtml('miningStatus', '<span class="error">Stratum server not reachable (' + esc(e.message) + '). It may still be starting.</span>');
         return;
       }
-      try {
-        const w = await api('workers');
-        // worker row: [name, ip, connections, accepted, rejected, invalid, hashes, last_ms, hr1m, hr10m, hr1h, hr12h, hr24h] (kH/s)
-        let acc = 0, rej = 0;
-        (w.workers || []).forEach(x => { acc += x[3] || 0; rej += (x[4] || 0) + (x[5] || 0); });
-        $('shares').textContent = acc.toLocaleString() + ' / ' + rej.toLocaleString();
-        const rows = (w.workers || []).map(x => {
-          const last = x[7] ? new Date(x[7]).toLocaleTimeString() : '—';
-          return '<tr><td title="' + esc(x[0]) + '">' + esc(shorten(x[0])) + '</td><td>' + esc(x[1]) + '</td><td>' + x[3] + '</td><td>' + x[4] + '</td><td>' + fmtHash((x[9] || 0) * 1000) + '</td><td>' + last + '</td></tr>';
-        });
-        setHtml('workers', rows.length ? rows.join('') : '<tr><td colspan="6" class="muted">No workers yet</td></tr>');
-      } catch (e) { /* ignore */ }
+      const sm = s.summary || {};
+      setHtml('miningStatus', '<span class="ok">Stratum server is up.</span> ' +
+        (sm.connected ? sm.connected + ' miner connection(s) from ' + sm.addresses + ' address(es).' : 'Waiting for miners to connect.'));
+      $('ttl').textContent = Math.round(s.ttl_hours || 12);
+      const hr = sm.hashrate || 0;                 // gateway reports H/s
+      $('hr').textContent = fmtHash(hr);
+      $('miners').textContent = sm.connected || 0;
+      $('shares').textContent = (sm.accepted || 0).toLocaleString() + ' / ' + (sm.rejected || 0).toLocaleString();
+      $('ttf').textContent = hr > 0 && lastDifficulty > 0 ? fmtDuration(lastDifficulty / hr) : '—';
+      $('netShare').textContent = hr > 0 && lastNetHash > 0 ? (hr / lastNetHash * 100).toFixed(2) + '%' : '—';
+      $('blocksTotal').textContent = (sm.blocks || 0).toLocaleString();
+      renderChart(s.addresses);
+      const rb = s.blocks || [];
+      setHtml('recent', rb.length ? 'Recent blocks: ' + rb.slice(0, 5).map(b =>
+        '#' + Number(b.height).toLocaleString() + ' by <span title="' + esc(b.address) + '">' + esc(shorten(b.address)) + '</span> (' + ago(b.ts) + ')').join(' &middot; ') : '');
+      const rows = (s.workers || []).map(w =>
+        '<tr><td title="' + esc(w.address + '.' + w.worker) + '"><span class="dot' + (w.connected ? ' on' : '') + '"></span>' +
+        esc(shorten(w.address)) + '.' + esc(shorten(w.worker)) + youTag(w.address) + '</td><td>' + esc(w.ip) + '</td><td>' + w.accepted +
+        '</td><td>' + w.rejected + '</td><td>' + fmtHash(w.hashrate) + '</td><td>' + ago(w.last_share) + '</td></tr>');
+      setHtml('workers', rows.length ? rows.join('') : '<tr><td colspan="6" class="muted">No active workers</td></tr>');
     }
+
+    $('copyCmd').addEventListener('click', () => {
+      const text = $('xmrigCmd').dataset.full || $('xmrigCmd').textContent;
+      const done = () => { $('copyMsg').textContent = ' Copied'; setTimeout(() => { $('copyMsg').textContent = ''; }, 2000); };
+      if (navigator.clipboard && window.isSecureContext) { navigator.clipboard.writeText(text).then(done); return; }
+      const ta = document.createElement('textarea');       // plain http (e.g. over Tailscale): clipboard API unavailable
+      ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0'; document.body.appendChild(ta); ta.select();
+      try { document.execCommand('copy'); done(); } catch (e) { $('copyMsg').textContent = ' Select and copy manually'; }
+      document.body.removeChild(ta);
+    });
+
+    $('myaddr').value = localStorage.getItem('safexAddr') || '';
+    $('myaddr').addEventListener('input', () => {
+      if (myAddr()) localStorage.setItem('safexAddr', myAddr());
+      updateMining();
+    });
 
     // Node and mining panels update independently so one failing never blanks the other.
     updateNode(); updateMining();
