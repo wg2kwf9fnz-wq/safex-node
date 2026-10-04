@@ -10,7 +10,8 @@ DAEMON_PORT="${DAEMON_PORT:-17402}"
 STRATUM_PORT="${STRATUM_PORT:-17404}"
 API_PORT="${API_PORT:-8080}"
 API_TOKEN="${API_TOKEN:-}"
-DEFAULT_DIFF="${DEFAULT_DIFF:-20000}"
+DEFAULT_DIFF="${DEFAULT_DIFF:-50000}"
+OLD_DEFAULT_DIFF=20000   # earlier releases shipped this default; migrate it, leave any other value alone
 PLACEHOLDER="SET_YOUR_SAFEX_WALLET_ADDRESS"
 
 mkdir -p /data
@@ -36,7 +37,8 @@ fi
 # Always enforce the settings owned by the app packaging (bind, daemon, API, mode).
 tmp=$(mktemp)
 jq --arg dh "${DAEMON_HOST}:${DAEMON_PORT}" \
-   --argjson sp "$STRATUM_PORT" --argjson ap "$API_PORT" --arg tok "$API_TOKEN" '
+   --argjson sp "$STRATUM_PORT" --argjson ap "$API_PORT" --arg tok "$API_TOKEN" \
+   --argjson dd "$DEFAULT_DIFF" --argjson od "$OLD_DEFAULT_DIFF" '
   .bind = [ { "host": "0.0.0.0", "port": $sp, "tls": false } ]
   | .http = { "enabled": ($tok != ""), "host": "0.0.0.0", "port": $ap, "access-token": (if $tok == "" then null else $tok end), "restricted": false }
   | .pools[0].url = $dh
@@ -44,6 +46,7 @@ jq --arg dh "${DAEMON_HOST}:${DAEMON_PORT}" \
   | .pools[0].coin = "SFX"
   | .["donate-level"] = 0
   | .["custom-diff-stats"] = true
+  | if .["custom-diff"] == $od then .["custom-diff"] = $dd else . end
   | .mode = "extra_nonce"
 ' "$CONFIG" > "$tmp" && cat "$tmp" > "$CONFIG" && rm -f "$tmp"
 

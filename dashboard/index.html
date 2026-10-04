@@ -31,6 +31,17 @@
     th { color: #999; font-weight: 500; }
     code { background: #111; padding: 2px 6px; border-radius: 4px; }
     .walletbox.needs { outline: 2px solid #fb3; }
+    .tablewrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    table { min-width: 520px; }
+    td, th { white-space: nowrap; }
+    code { word-break: break-all; }
+    @media (max-width: 600px) {
+      body { padding: 16px; }
+      h1 { font-size: 24px; }
+      .card { padding: 16px; }
+      .value { font-size: 20px; }
+      .grid { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+    }
   </style>
 </head>
 <body>
@@ -71,7 +82,7 @@
       <div class="value small" id="stratumUrl">stratum+tcp://—:17404</div>
       <p class="muted">
         XMRig example: <code id="xmrigCmd">xmrig -a rx/sfx -o HOST:17404 -u rig1 -p x</code><br>
-        Optional fixed difficulty per worker: use username <code>rig1+50000</code>.
+        Default share difficulty is 50,000 (roughly one share every 10 seconds per 5 kH/s). Pick another per worker through the username, e.g. <code>rig1+200000</code>; use a higher value for big rented rigs.
         For miners outside your home network (e.g. MiningRigRentals) forward TCP port 17404 on your router to this Umbrel.
         Algorithm: <b>RandomSFX (rx/sfx)</b>.
       </p>
@@ -82,14 +93,15 @@
       <div class="card"><div class="label">Miners connected</div><div id="miners" class="value">—</div></div>
       <div class="card"><div class="label">Shares accepted / rejected</div><div id="shares" class="value">—</div></div>
       <div class="card"><div class="label">Est. time to find a block</div><div id="ttf" class="value">—</div></div>
+      <div class="card"><div class="label">Share of network hashrate</div><div id="netShare" class="value">—</div></div>
     </div>
 
     <div class="card wide">
       <div class="label">Workers</div>
-      <table>
+      <div class="tablewrap"><table>
         <thead><tr><th>Worker</th><th>IP</th><th>Accepted</th><th>Rejected</th><th>Hashrate (10m)</th><th>Last share</th></tr></thead>
         <tbody id="workers"><tr><td colspan="6" class="muted">No workers yet</td></tr></tbody>
-      </table>
+      </table></div>
     </div>
   </div>
 
@@ -97,7 +109,15 @@
     const $ = (id) => document.getElementById(id);
     const PLACEHOLDER = 'SET_YOUR_SAFEX_WALLET_ADDRESS';
     let lastDifficulty = 0;
+    let lastNetHash = 0;
     let walletSet = false;
+
+    // Condense long strings: Safex addresses become "Safex.....34e2N"; other long names are truncated in the middle.
+    function shorten(s) {
+      s = String(s);
+      if (/^Safex[1-9A-HJ-NP-Za-km-z]{40,}$/.test(s)) return s.slice(0, 5) + '.....' + s.slice(-5);
+      return s.length > 24 ? s.slice(0, 12) + '...' + s.slice(-6) : s;
+    }
 
     function fmtHash(h) {
       if (!h || !isFinite(h)) return '0 H/s';
@@ -123,12 +143,14 @@
         $('network').textContent = data.mainnet ? 'Mainnet' : data.testnet ? 'Testnet' : 'Stagenet';
         $('nodeStatus').textContent = data.status;
         $('height').textContent = Number(data.height).toLocaleString();
-        $('targetHeight').textContent = Number(data.target_height).toLocaleString();
+        // The node reports target_height = 0 (or a stale lower value) once it is synced; never show it below the current height.
+        $('targetHeight').textContent = Math.max(Number(data.target_height) || 0, Number(data.height)).toLocaleString();
         $('incoming').textContent = data.incoming_connections_count;
         $('outgoing').textContent = data.outgoing_connections_count;
         $('difficulty').textContent = Number(data.difficulty).toLocaleString();
         lastDifficulty = Number(data.difficulty);
-        $('netHashrate').textContent = fmtHash(lastDifficulty / (data.target || 120));
+        lastNetHash = lastDifficulty / (data.target || 120);
+        $('netHashrate').textContent = fmtHash(lastNetHash);
         const height = Number(data.height);
         const target = Math.max(Number(data.target_height), height);
         const percent = target > 0 ? Math.min(100, (height / target) * 100) : 0;
@@ -151,9 +173,9 @@
       walletSet = !!user && user !== PLACEHOLDER;
       $('walletBox').classList.toggle('needs', !walletSet);
       setHtml('currentWallet', walletSet
-        ? 'Currently set to: <code>' + esc(user) + '</code>'
+        ? 'Currently set to: <code title="' + esc(user) + '">' + esc(shorten(user)) + '</code>'
         : '<span class="warn">No wallet set yet.</span>');
-      if (walletSet && document.activeElement !== $('wallet') && !$('wallet').value) $('wallet').value = user;
+      $('wallet').placeholder = walletSet ? 'Paste a new Safex address to change it' : 'Safex5...';
       return user;
     }
 
@@ -172,6 +194,7 @@
         await api('config', { method: 'PUT', body: JSON.stringify(cfg) });
         await new Promise(r => setTimeout(r, 1500));
         await loadWallet();
+        $('wallet').value = '';
         setHtml('walletMsg', ' <span class="ok">Saved. The stratum server reloaded with your wallet.</span>');
         updateMining();
       } catch (e) {
@@ -199,6 +222,7 @@
         $('hr').textContent = fmtHash(hr);
         $('miners').textContent = s.miners ? s.miners.now : 0;
         $('ttf').textContent = hr > 0 && lastDifficulty > 0 ? fmtDuration(lastDifficulty / hr) : '—';
+        $('netShare').textContent = hr > 0 && lastNetHash > 0 ? (hr / lastNetHash * 100).toFixed(2) + '%' : '—';
       } catch (e) {
         setHtml('miningStatus', '<span class="error">Stratum server not reachable (' + esc(e.message) + '). It may still be starting.</span>');
         return;
@@ -211,7 +235,7 @@
         $('shares').textContent = acc.toLocaleString() + ' / ' + rej.toLocaleString();
         const rows = (w.workers || []).map(x => {
           const last = x[7] ? new Date(x[7]).toLocaleTimeString() : '—';
-          return '<tr><td>' + esc(x[0]) + '</td><td>' + esc(x[1]) + '</td><td>' + x[3] + '</td><td>' + x[4] + '</td><td>' + fmtHash((x[9] || 0) * 1000) + '</td><td>' + last + '</td></tr>';
+          return '<tr><td title="' + esc(x[0]) + '">' + esc(shorten(x[0])) + '</td><td>' + esc(x[1]) + '</td><td>' + x[3] + '</td><td>' + x[4] + '</td><td>' + fmtHash((x[9] || 0) * 1000) + '</td><td>' + last + '</td></tr>';
         });
         setHtml('workers', rows.length ? rows.join('') : '<tr><td colspan="6" class="muted">No workers yet</td></tr>');
       } catch (e) { /* ignore */ }
@@ -219,8 +243,9 @@
 
     // Node and mining panels update independently so one failing never blanks the other.
     updateNode(); updateMining();
-    setInterval(updateNode, 10000);
-    setInterval(updateMining, 10000);
+    setInterval(() => { if (!document.hidden) updateNode(); }, 10000);
+    setInterval(() => { if (!document.hidden) updateMining(); }, 10000);
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) { updateNode(); updateMining(); } });
   </script>
 </body>
 </html>

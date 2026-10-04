@@ -12,6 +12,10 @@ server {
 
     add_header Cache-Control "no-store" always;
 
+    gzip on;
+    gzip_types text/html application/json;
+    gzip_min_length 512;
+
     location / {
         try_files $uri /index.html;
     }
