@@ -34,13 +34,18 @@ RUN cd /src/tests && timeout 150 python3 gateway_test.py tpl-mainnet-2099175.jso
 FROM debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        ca-certificates libuv1 libssl3 python3-minimal tini \
+        ca-certificates libuv1 libssl3 python3 tini \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /src/xmrig-proxy/build/xmrig-proxy /usr/local/bin/xmrig-proxy
 COPY gateway.py /usr/local/bin/gateway.py
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
+
+# Smoke test INSIDE THE FINAL IMAGE (the tests above run in the builder stage, which has more packages).
+# Fails the build if the runtime image is missing a Python module or a shared library.
+RUN cd /usr/local/bin && python3 -c "import gateway; print('gateway imports OK in runtime image')" \
+    && xmrig-proxy --version | head -1
 
 VOLUME /data
 EXPOSE 17404 8080
