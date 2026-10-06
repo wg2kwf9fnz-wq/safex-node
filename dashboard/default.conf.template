@@ -34,6 +34,14 @@ server {
 
     # Stratum gateway API (read-only stats). The token never reaches the browser: nginx adds it.
     # The page itself sits behind Umbrel's app_proxy login.
+    location = /stratum-api/chain {
+        set $stratum_upstream http://stratum:8080;
+        proxy_pass $stratum_upstream/chain;
+        proxy_http_version 1.1;
+        proxy_set_header Authorization "Bearer ${STRATUM_API_TOKEN}";
+        proxy_read_timeout 10s;
+    }
+
     location = /stratum-api/state {
         set $stratum_upstream http://stratum:8080;
         proxy_pass $stratum_upstream/state;

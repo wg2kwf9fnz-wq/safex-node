@@ -62,12 +62,23 @@
       <div class="card"><div class="label">Outgoing Peers</div><div id="outgoing" class="value">—</div></div>
       <div class="card"><div class="label">Difficulty</div><div id="difficulty" class="value">—</div></div>
       <div class="card"><div class="label">Est. Network Hashrate</div><div id="netHashrate" class="value">—</div></div>
+      <div class="card"><div class="label">Mempool (pending txs)</div><div id="mempool" class="value">—</div></div>
+      <div class="card"><div class="label">Node uptime</div><div id="uptime" class="value">—</div></div>
+      <div class="card"><div class="label">Disk free</div><div id="diskfree" class="value">—</div></div>
     </div>
 
     <div class="sync card">
       <div class="label">Synchronization</div>
       <div id="syncText" class="value">—</div>
       <div class="bar"><div id="progress" class="progress"></div></div>
+    </div>
+
+    <div class="card wide">
+      <div class="label">Recent blocks <span class="muted">&mdash; Safex is a privacy chain: amounts and addresses are hidden on-chain, so only public block data is shown</span></div>
+      <div class="tablewrap"><table style="min-width:460px">
+        <thead><tr><th>Height</th><th>Age</th><th>Txs</th><th>Size</th><th>Reward</th><th>Mined via</th></tr></thead>
+        <tbody id="recentChain"><tr><td colspan="6" class="muted">Loading...</td></tr></tbody>
+      </table></div>
     </div>
 
     <h2>Solo Mining (Stratum)</h2>
@@ -140,6 +151,17 @@
       if (s < 172800) return (s / 3600).toFixed(1) + ' h ago';
       return Math.round(s / 86400) + ' d ago';
     }
+    function fmtBytes(n) {
+      n = Number(n) || 0;
+      const u = ['B', 'KB', 'MB', 'GB', 'TB']; let i = 0;
+      while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+      return (i > 1 ? n.toFixed(1) : Math.round(n)) + ' ' + u[i];
+    }
+    function fmtUptime(sec) {
+      sec = Math.max(0, Number(sec) || 0);
+      const d = Math.floor(sec / 86400), h = Math.floor(sec % 86400 / 3600), m = Math.floor(sec % 3600 / 60);
+      return d ? d + 'd ' + h + 'h' : h ? h + 'h ' + m + 'm' : m + ' min';
+    }
     function esc(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
     function setHtml(id, html) { $(id).innerHTML = html; }
     // Safex addresses are shown condensed: Safex.....34e2N
@@ -168,6 +190,9 @@
         lastDifficulty = Number(data.difficulty);
         lastNetHash = lastDifficulty / (data.target || 120);
         $('netHashrate').textContent = fmtHash(lastNetHash);
+        $('mempool').textContent = data.tx_pool_size === undefined ? '—' : Number(data.tx_pool_size).toLocaleString();
+        $('uptime').textContent = data.start_time ? fmtUptime(Date.now() / 1000 - data.start_time) : '—';
+        $('diskfree').textContent = data.free_space ? fmtBytes(data.free_space) : '—';
         const height = Number(data.height);
         const target = Math.max(Number(data.target_height), height);
         const percent = target > 0 ? Math.min(100, (height / target) * 100) : 0;
@@ -175,6 +200,24 @@
         $('progress').style.width = percent + '%';
       } catch (error) {
         setHtml('status', '<span class="error">Unable to connect to Safex node (' + esc(error.message) + ')</span>');
+      }
+    }
+
+    async function updateChain() {
+      try {
+        const r = await fetch('/stratum-api/chain', { cache: 'no-store' });
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const c = await r.json();
+        const me = myAddr();
+        setHtml('recentChain', (c.blocks || []).slice(0, 10).map(b => {
+          const via = b.found_by
+            ? '<span title="' + esc(b.found_by) + '">' + esc(shorten(b.found_by)) + '</span>' + youTag(b.found_by)
+            : '<span class="muted">network</span>';
+          return '<tr><td title="' + esc(b.hash) + '">#' + Number(b.height).toLocaleString() + (b.orphan ? ' (orphan)' : '') + '</td><td>' + ago(b.timestamp) +
+            '</td><td>' + b.txs + '</td><td>' + fmtBytes(b.size) + '</td><td>' + Number(b.reward).toLocaleString(undefined, { maximumFractionDigits: 2 }) + ' SFX</td><td>' + via + '</td></tr>';
+        }).join('') || '<tr><td colspan="6" class="muted">No blocks yet</td></tr>');
+      } catch (e) {
+        setHtml('recentChain', '<tr><td colspan="6" class="muted">Recent blocks unavailable (' + esc(e.message) + ')</td></tr>');
       }
     }
 
@@ -243,10 +286,11 @@
     });
 
     // Node and mining panels update independently so one failing never blanks the other.
-    updateNode(); updateMining();
+    updateNode(); updateMining(); updateChain();
+    setInterval(() => { if (!document.hidden) updateChain(); }, 20000);
     setInterval(() => { if (!document.hidden) updateNode(); }, 10000);
     setInterval(() => { if (!document.hidden) updateMining(); }, 10000);
-    document.addEventListener('visibilitychange', () => { if (!document.hidden) { updateNode(); updateMining(); } });
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) { updateNode(); updateMining(); updateChain(); } });
   </script>
 </body>
 </html>

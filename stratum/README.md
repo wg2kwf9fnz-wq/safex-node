@@ -10,7 +10,11 @@ miner --stratum--> gateway :17404 --(one per address)--> xmrig-proxy (daemon/sol
   **that** address. A block found by a miner pays the full reward to that miner's address. No pool, no fees, no payouts.
 * `GET /state` (Bearer `API_TOKEN`) returns live stats for the dashboard: workers, hashrate, blocks found per address.
   Workers with no share for 12 hours (`WORKER_TTL`) are dropped from the list. State is kept in `/data/gateway-state.json`.
-* Limits (env): `MAX_INSTANCES` 100 addresses, `MAX_ADDRS_PER_IP` 8, `MAX_CONNS_PER_IP` 64; idle instances stop after 10 minutes.
+* Abuse protection (all env-tunable; LAN, loopback and Tailscale IPs are exempt from the per-IP rules):
+  invalid usernames (`MAX_BAD_LOGINS` in 10 min), share floods (`SUBMITS_PER_SEC`) and rejected-share spam ban the IP for `BAN_SECONDS` (15 min);
+  `LOGINS_PER_MIN`, `MAX_CONNS_PER_IP`, `MAX_ADDRS_PER_IP`, `MAX_CONNS_PER_ADDR`, `MAX_CONNS_TOTAL`; at most `NEW_ADDR_PER_MIN` new addresses per minute and `MAX_INSTANCES` (50) active addresses;
+  minimum requested difficulty `MIN_DIFF` (2000); idle connections are dropped after `IDLE_CONN` (30 min). Never-used instances are stopped after 60 s, idle ones after 10 min.
+* `GET /chain` returns public chain data for the dashboard (recent blocks, mempool size, uptime, free disk).
 
 ## xmrig-proxy patch (`xmrig-proxy-safex.patch`)
 Stock xmrig-proxy knows `rx/sfx` but not Safex's older block format:

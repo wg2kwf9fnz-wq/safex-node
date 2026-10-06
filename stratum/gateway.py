@@ -11,7 +11,7 @@ Safex stratum gateway: solo mining where every miner is paid to the Safex addres
 * Tracks per-worker stats (shares, hashrate, last activity) and blocks found per address; serves them on
   GET /state (Bearer token) for the dashboard. State is persisted in STATE_FILE.
 """
-import asyncio, collections, hmac, json, os, re, signal, sys, tempfile, threading, time, urllib.request
+import asyncio, collections, hmac, ipaddress, json, os, re, signal, sys, tempfile, threading, time, urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
@@ -30,8 +30,21 @@ DEFAULT_DIFF   = env('DEFAULT_DIFF', 50000)
 STATE_FILE     = env('STATE_FILE', '/data/gateway-state.json')
 PROXY_BIN      = env('PROXY_BIN', '/usr/local/bin/xmrig-proxy')
 WORKER_TTL     = env('WORKER_TTL', 12 * 3600)       # seconds without a share before a worker leaves the list
-MAX_INSTANCES  = env('MAX_INSTANCES', 100)
+MAX_INSTANCES  = env('MAX_INSTANCES', 50)
 MAX_CONNS_IP   = env('MAX_CONNS_PER_IP', 64)
+# --- abuse limits (all per remote IP unless noted; private/loopback/Tailscale IPs are exempt from the per-IP ones)
+MAX_CONNS_TOTAL = env('MAX_CONNS_TOTAL', 500)
+MAX_CONNS_ADDR = env('MAX_CONNS_PER_ADDR', 64)         # per payout address
+LOGINS_PER_MIN = env('LOGINS_PER_MIN', 30)             # connection attempts per minute
+MAX_BAD_LOGINS = env('MAX_BAD_LOGINS', 10)             # invalid usernames/addresses within 10 min -> ban
+BAN_SECONDS    = env('BAN_SECONDS', 900)
+NEW_ADDR_PER_MIN = env('NEW_ADDR_PER_MIN', 6)          # global: new addresses (proxy instances) started per minute
+SUBMITS_PER_SEC = env('SUBMITS_PER_SEC', 20)           # sustained share submits per connection (burst = 3 s worth)
+REJECT_BAN_MIN = env('REJECT_BAN_MIN', 50)             # rejected shares (and 5x more rejected than accepted) -> ban
+MIN_DIFF       = env('MIN_DIFF', 2000)                 # lowest +difficulty a miner may ask for
+IDLE_CONN      = env('IDLE_CONN', 1800)                # drop a connection that sends nothing for this long
+EXEMPT_PRIVATE = env('EXEMPT_PRIVATE_IPS', 1)          # 1 = LAN/loopback/Tailscale are never limited or banned
+CHAIN_CACHE    = 15
 MAX_ADDRS_IP   = env('MAX_ADDRS_PER_IP', 8)
 IDLE_STOP      = env('IDLE_STOP', 600)              # seconds an instance with no miners is kept alive
 PORT_BASE      = env('INSTANCE_PORT_BASE', 30000)
@@ -131,7 +144,7 @@ def parse_login(login, params):
     worker = worker or 'default'
     d = None
     if diff:
-        d = max(100, min(int(diff), 10 ** 12))
+        d = max(MIN_DIFF, min(int(diff), 10 ** 12))
     return addr, worker, d
 
 def target_to_diff(t):
@@ -305,6 +318,7 @@ class Instance:
         self.conns = 0
         self.last_active = time.time()
         self.ready = False
+        self.had_share = False
         self.tail = collections.deque(maxlen=40)
         self.task = None
 
@@ -382,6 +396,7 @@ class Instance:
 INSTANCES = {}
 _LOCKS = {}
 VALID, INVALID = {}, {}
+VALIDATE_SEM = asyncio.Semaphore(4)       # at most 4 node lookups for unknown addresses at once
 
 def pick_port():
     used = {i.port for i in INSTANCES.values()}
@@ -403,6 +418,12 @@ async def get_instance(addr):
             inst.stop(); INSTANCES.pop(addr, None)
         if len(INSTANCES) >= MAX_INSTANCES:
             raise Refused('Server is at its limit of active addresses, try again later')
+        now = time.time()
+        while NEW_STARTS and now - NEW_STARTS[0] > 60:
+            NEW_STARTS.popleft()
+        if len(NEW_STARTS) >= NEW_ADDR_PER_MIN:
+            raise Refused('Server is busy starting other addresses, try again in a minute')
+        NEW_STARTS.append(now)
         inst = Instance(addr, pick_port())
         INSTANCES[addr] = inst
         try:
@@ -451,6 +472,58 @@ async def check_address(addr):
     return res
 
 
+# ---------------------------------------------------------------- abuse protection helpers
+BANS = {}                                  # ip -> banned-until
+LOGIN_LOG = collections.defaultdict(collections.deque)
+NEW_STARTS = collections.deque()
+_CGNAT = ipaddress.ip_network('100.64.0.0/10')   # Tailscale
+
+def limited(ip):
+    # True if per-IP limits/bans apply to this address.
+    if not EXEMPT_PRIVATE:
+        return True
+    try:
+        a = ipaddress.ip_address(ip.split('%')[0])
+    except ValueError:
+        return True
+    if a.version == 4 and a in _CGNAT:
+        return False
+    return not (a.is_private or a.is_loopback or a.is_link_local)
+
+def ban(ip, why, seconds=None):
+    if not limited(ip):
+        return
+    dur = min(seconds, BAN_SECONDS) if seconds else BAN_SECONDS
+    BANS[ip] = time.time() + dur
+    log('banned', ip, 'for', int(dur), 's:', why)
+    if len(BANS) > 5000:
+        now = time.time()
+        for k in [k for k, v in BANS.items() if v < now]:
+            del BANS[k]
+
+def banned(ip):
+    until = BANS.get(ip)
+    if not until:
+        return False
+    if until < time.time():
+        del BANS[ip]
+        return False
+    return True
+
+def login_rate_ok(ip):
+    now = time.time()
+    dq = LOGIN_LOG[ip]
+    while dq and now - dq[0] > 60:
+        dq.popleft()
+    if len(dq) >= LOGINS_PER_MIN:
+        return False
+    dq.append(now)
+    if len(LOGIN_LOG) > 5000:
+        for k in [k for k, v in LOGIN_LOG.items() if not v or now - v[-1] > 60]:
+            del LOGIN_LOG[k]
+    return True
+
+
 # ---------------------------------------------------------------- stratum front end
 CONNS = []                       # active Conn objects
 BAD_LOGINS = collections.defaultdict(list)
@@ -460,6 +533,10 @@ class Conn:
         self.ip, self.addr, self.key = ip, None, None
         self.pending = collections.OrderedDict()
         self.diff = 0
+        self.inst = None
+        self.acc = self.rej = 0
+        self.tokens = SUBMITS_PER_SEC * 3.0
+        self.t_last = time.time()
 
 def err_line(rid, msg):
     return (json.dumps({'id': rid, 'jsonrpc': '2.0', 'error': {'code': -1, 'message': msg}}) + '\n').encode()
@@ -467,14 +544,22 @@ def err_line(rid, msg):
 async def c2s(cr, bw, conn):
     while True:
         try:
-            line = await cr.readline()
-        except (ValueError, ConnectionError):
+            line = await asyncio.wait_for(cr.readline(), IDLE_CONN)
+        except (ValueError, ConnectionError, asyncio.TimeoutError):
             return
         if not line:
             return
         try:
             m = json.loads(line)
             if isinstance(m, dict) and m.get('method') == 'submit':
+                now = time.time()
+                conn.tokens = min(SUBMITS_PER_SEC * 3.0, conn.tokens + (now - conn.t_last) * SUBMITS_PER_SEC)
+                conn.t_last = now
+                if conn.tokens < 1:
+                    log('share flood from', conn.ip, short(conn.addr or ''), '- disconnecting')
+                    ban(conn.ip, 'share flood', 120)
+                    return
+                conn.tokens -= 1
                 conn.pending[json.dumps(m.get('id'))] = time.time()
                 while len(conn.pending) > 500:
                     conn.pending.popitem(last=False)
@@ -502,7 +587,17 @@ async def s2c(br, cw, conn):
                     rid = json.dumps(m.get('id'))
                     if rid in conn.pending:
                         del conn.pending[rid]
-                        STATE.share(conn.key, bool(not m.get('error') and isinstance(res, dict) and res.get('status') == 'OK'), conn.diff)
+                        ok = bool(not m.get('error') and isinstance(res, dict) and res.get('status') == 'OK')
+                        STATE.share(conn.key, ok, conn.diff)
+                        if ok:
+                            conn.acc += 1
+                            if conn.inst:
+                                conn.inst.had_share = True
+                        else:
+                            conn.rej += 1
+                            if conn.rej >= REJECT_BAN_MIN and conn.acc * 5 < conn.rej:
+                                ban(conn.ip, '%d rejected vs %d accepted shares' % (conn.rej, conn.acc), 600)
+                                return
                     elif isinstance(res, dict) and isinstance(res.get('job'), dict):
                         conn.diff = target_to_diff(res['job'].get('target')) or conn.diff
                         STATE.set_diff(conn.key, conn.diff)
@@ -519,9 +614,14 @@ async def handle(cr, cw):
     bw = None
     try:
         now = time.time()
-        BAD_LOGINS[ip] = [t for t in BAD_LOGINS[ip] if now - t < 600]
-        if len(BAD_LOGINS[ip]) > 20 or sum(1 for c in CONNS if c.ip == ip) >= MAX_CONNS_IP:
+        lim = limited(ip)
+        if lim and banned(ip):
             return
+        if len(CONNS) >= MAX_CONNS_TOTAL:
+            return
+        if lim and (not login_rate_ok(ip) or sum(1 for c in CONNS if c.ip == ip) >= MAX_CONNS_IP):
+            return
+        BAD_LOGINS[ip] = [t for t in BAD_LOGINS[ip] if now - t < 600]
         try:
             line = await asyncio.wait_for(cr.readline(), 15)
         except (asyncio.TimeoutError, ValueError, ConnectionError):
@@ -538,15 +638,23 @@ async def handle(cr, cw):
         parsed = parse_login(str(params.get('login', '')), params)
         if not parsed:
             BAD_LOGINS[ip].append(now)
+            if len(BAD_LOGINS[ip]) >= MAX_BAD_LOGINS:
+                ban(ip, 'too many invalid logins')
             cw.write(err_line(rid, 'Username must be your Safex address, e.g. Safex5...  (optionally .workername and +difficulty)'))
             await cw.drain(); return
         addr, worker, diff = parsed
-        if addr not in {c.addr for c in CONNS if c.ip == ip} and len({c.addr for c in CONNS if c.ip == ip}) >= MAX_ADDRS_IP:
+        if sum(1 for c in CONNS if c.addr == addr) >= MAX_CONNS_ADDR:
+            cw.write(err_line(rid, 'Too many connections for this address'))
+            await cw.drain(); return
+        if lim and addr not in {c.addr for c in CONNS if c.ip == ip} and len({c.addr for c in CONNS if c.ip == ip}) >= MAX_ADDRS_IP:
             cw.write(err_line(rid, 'Too many different addresses from one IP address'))
             await cw.drain(); return
-        verdict = await check_address(addr)
+        async with VALIDATE_SEM:
+            verdict = await check_address(addr)
         if verdict == 'invalid':
             BAD_LOGINS[ip].append(now)
+            if len(BAD_LOGINS[ip]) >= MAX_BAD_LOGINS:
+                ban(ip, 'too many invalid logins')
             cw.write(err_line(rid, 'Invalid Safex address'))
             await cw.drain(); return
         if verdict == 'busy':
@@ -564,6 +672,7 @@ async def handle(cr, cw):
             await cw.drain(); return
         inst.conns += 1
         inst.last_active = time.time()
+        conn.inst = inst
         conn.addr = addr
         conn.key = STATE.connect(addr, worker, ip)
         CONNS.append(conn)
@@ -596,6 +705,38 @@ async def handle(cr, cw):
                 pass
 
 
+# ---------------------------------------------------------------- chain info for the dashboard (public chain data only)
+_CHAIN = {'at': 0, 'data': None}
+_CHAIN_LOCK = threading.Lock()
+ATOMIC = 10 ** 10                                   # Safex has 10 decimal places
+
+def _rpc(path, body=None):
+    url = 'http://%s:%d%s' % (DAEMON_HOST, DAEMON_PORT, path)
+    req = urllib.request.Request(url, data=json.dumps(body).encode() if body is not None else None,
+                                 headers={'Content-Type': 'application/json'})
+    with urllib.request.urlopen(req, timeout=8) as r:
+        return json.loads(r.read())
+
+def chain_info():
+    with _CHAIN_LOCK:
+        if _CHAIN['data'] and time.time() - _CHAIN['at'] < CHAIN_CACHE:
+            return _CHAIN['data']
+        info = _rpc('/get_info')
+        top = int(info['height']) - 1
+        hdrs = _rpc('/json_rpc', {'jsonrpc': '2.0', 'id': 0, 'method': 'get_block_headers_range',
+                                  'params': {'start_height': max(0, top - 11), 'end_height': top}})['result']['headers']
+        with STATE.lock:
+            ours = {b['height']: b['address'] for b in STATE.blocks}
+        blocks = [dict(height=h['height'], hash=h['hash'], timestamp=h['timestamp'], size=h['block_size'],
+                       txs=h['num_txes'], reward=h['reward'] / ATOMIC, orphan=bool(h.get('orphan_status')),
+                       found_by=ours.get(h['height'])) for h in sorted(hdrs, key=lambda x: -x['height'])]
+        data = dict(height=info['height'], mempool=info.get('tx_pool_size', 0), difficulty=info.get('difficulty'),
+                    start_time=info.get('start_time'), tx_count=info.get('tx_count'),
+                    free_space=info.get('free_space'), blocks=blocks, now=int(time.time()))
+        _CHAIN.update(at=time.time(), data=data)
+        return data
+
+
 # ---------------------------------------------------------------- HTTP API for the dashboard
 class Api(BaseHTTPRequestHandler):
     def log_message(self, *a):
@@ -619,6 +760,11 @@ class Api(BaseHTTPRequestHandler):
                 return self._send(401, {'error': 'unauthorized'})
         if self.path == '/state':
             return self._send(200, STATE.snapshot(instances=len(INSTANCES)))
+        if self.path == '/chain':
+            try:
+                return self._send(200, chain_info())
+            except Exception as e:
+                return self._send(502, {'error': 'node not reachable: %s' % type(e).__name__})
         self._send(404, {'error': 'not found'})
 
 
@@ -631,7 +777,7 @@ async def housekeeping():
             if not inst.alive():
                 log('instance for', short(addr), 'exited; will restart on next login')
                 INSTANCES.pop(addr, None)
-            elif inst.conns == 0 and now - inst.last_active > IDLE_STOP:
+            elif inst.conns == 0 and now - inst.last_active > (IDLE_STOP if inst.had_share else 60):
                 log('stopping idle instance for', short(addr))
                 inst.stop(); INSTANCES.pop(addr, None)
         STATE.housekeeping()

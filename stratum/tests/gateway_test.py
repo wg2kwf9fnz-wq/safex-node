@@ -42,13 +42,18 @@ class H(BaseHTTPRequestHandler):
         if self.path == '/getheight':
             return self._send({'height': TPL['height'], 'hash': TPL['prev_hash'], 'status': 'OK'})
         if self.path in ('/getinfo', '/get_info'):
-            return self._send({'height': TPL['height'], 'top_block_hash': TPL['prev_hash'], 'status': 'OK'})
+            return self._send({'height': TPL['height'], 'top_block_hash': TPL['prev_hash'], 'status': 'OK', 'tx_pool_size': 3,
+                               'difficulty': 35000000, 'start_time': int(time.time()) - 7200, 'tx_count': 1234, 'free_space': 10**12})
         req = json.loads(body or b'{}'); m = req.get('method'); rid = req.get('id'); p = req.get('params', {})
         if m in ('getblocktemplate', 'get_block_template'):
             template_calls.append((p.get('wallet_address'), 'extra_nonce' in p))
             if p.get('wallet_address') == 'NOPE':
                 return self._send({'jsonrpc': '2.0', 'id': rid, 'error': {'code': -2, 'message': 'Failed to parse wallet address'}})
             return self._send({'jsonrpc': '2.0', 'id': rid, 'result': TPL})
+        if m == 'get_block_headers_range':
+            hs = [{'height': h, 'hash': '%064x' % h, 'timestamp': 1791000000 + h, 'block_size': 96 + h % 7, 'num_txes': h % 3,
+                   'reward': 4000000000000, 'orphan_status': False} for h in range(p['start_height'], p['end_height'] + 1)]
+            return self._send({'jsonrpc': '2.0', 'id': rid, 'result': {'headers': hs, 'status': 'OK'}})
         if m in ('submitblock', 'submit_block'):
             submitted.append(p[0])
             return self._send({'jsonrpc': '2.0', 'id': rid, 'result': {'status': 'OK'}})
@@ -59,21 +64,30 @@ threading.Thread(target=srv.serve_forever, daemon=True).start()
 
 # ------------------------------------------------------------------ gateway process
 gw = None
-def start_gateway():
+def start_gateway(extra=None):
     global gw
-    env = dict(os.environ, STRATUM_PORT=str(STRATUM), API_PORT=str(API), API_TOKEN='tok', DAEMON_HOST='127.0.0.1',
+    env = dict(os.environ, EXEMPT_PRIVATE_IPS='0', STRATUM_PORT=str(STRATUM), API_PORT=str(API), API_TOKEN='tok', DAEMON_HOST='127.0.0.1',
                DAEMON_PORT=str(DAEMON), DEFAULT_DIFF='10000', STATE_FILE=STATE, PROXY_BIN=PROXY, WORKER_TTL=str(TTL),
                MAX_ADDRS_PER_IP='2', INSTANCE_PORT_BASE='31500', BIND_HOST='127.0.0.1')
+    env.update(extra or {})
     gw = subprocess.Popen([sys.executable, GATEWAY], env=env, stdout=open(os.path.join(tmp, 'gw.log'), 'a'), stderr=subprocess.STDOUT)
-    for _ in range(50):
+    for _ in range(60):
+        if gw.poll() is not None:
+            raise SystemExit('gateway process exited during start-up (see gw.log)')
         try:
-            socket.create_connection(('127.0.0.1', STRATUM), timeout=1).close(); return
+            socket.create_connection(('127.0.0.1', STRATUM), timeout=1).close()
+            urllib.request.urlopen('http://127.0.0.1:%d/healthz' % API, timeout=2).read()
+            return
         except OSError: time.sleep(0.2)
     raise SystemExit('gateway did not start')
 def stop_gateway():
     gw.send_signal(signal.SIGTERM)
     try: gw.wait(15)
-    except subprocess.TimeoutExpired: gw.kill()
+    except subprocess.TimeoutExpired: gw.kill(); gw.wait()
+    for _ in range(50):                      # wait until the listening ports are really free again
+        try:
+            t = socket.socket(); t.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); t.bind(('127.0.0.1', STRATUM)); t.close(); break
+        except OSError: time.sleep(0.2)
 def cleanup():
     try: stop_gateway()
     except Exception: pass
@@ -91,7 +105,10 @@ class Miner:
         p = {'login': login, 'pass': pw, 'agent': 'test/1', 'algo': ['rx/sfx']}
         p.update(extra or {})
         self.f.write((json.dumps({'id': 1, 'jsonrpc': '2.0', 'method': 'login', 'params': p}) + '\n').encode()); self.f.flush()
-        line = self.f.readline()
+        try:
+            line = self.f.readline()
+        except (ConnectionError, OSError):
+            line = b''   # server closed on us (ban / limit)
         self.resp = json.loads(line) if line else None
         self.job = (self.resp or {}).get('result', {}).get('job') if self.resp else None
         self.sid = (self.resp or {}).get('result', {}).get('id') if self.resp else None
@@ -167,5 +184,83 @@ s = state()
 blk = {a['address']: a['blocks'] for a in s['addresses']}
 check(blk.get(B) == 1, 'block history survived a gateway restart')
 d = Miner(B); check(d.job is not None, 'address B can mine again after restart (instance respawned)'); d.close()
+
+# 8. chain info endpoint (public chain data for the dashboard)
+req = urllib.request.Request('http://127.0.0.1:%d/chain' % API, headers={'Authorization': 'Bearer tok'})
+ch = json.load(urllib.request.urlopen(req, timeout=10))
+check(ch['mempool'] == 3 and ch['tx_count'] == 1234 and len(ch['blocks']) == 12, '/chain: mempool, tx count and 12 recent blocks')
+hs = [b['height'] for b in ch['blocks']]
+check(hs == sorted(hs, reverse=True) and hs[0] == TPL['height'] - 1, '/chain: newest first, top block is height-1')
+check(abs(ch['blocks'][0]['reward'] - 400.0) < 1e-9, '/chain: reward converted from atomic units (400 SFX)')
+req = urllib.request.Request('http://127.0.0.1:%d/chain' % API)
+try:
+    urllib.request.urlopen(req, timeout=5); check(False, '/chain without token must be refused')
+except urllib.error.HTTPError as e:
+    check(e.code == 401, '/chain without the API token is refused (401)')
+# found_by mapping: unit test with the node RPC stubbed
+import importlib.util
+spec = importlib.util.spec_from_file_location('gwmod', GATEWAY); gwm = importlib.util.module_from_spec(spec); spec.loader.exec_module(gwm)
+gwm.STATE.blocks = [{'ts': 1, 'height': 2100005, 'address': 'SafexOURS'}]
+def fake_rpc(path, body=None):
+    if path == '/get_info': return {'height': 2100010, 'tx_pool_size': 0}
+    return {'result': {'headers': [{'height': h, 'hash': 'x', 'timestamp': 1, 'block_size': 1, 'num_txes': 0, 'reward': 1, 'orphan_status': False} for h in range(body['params']['start_height'], body['params']['end_height'] + 1)]}}
+gwm._rpc = fake_rpc
+fb = {b['height']: b['found_by'] for b in gwm.chain_info()['blocks']}
+check(fb.get(2100005) == 'SafexOURS' and fb.get(2100006) is None, '/chain: blocks mined through this stratum are marked with their address')
+
+# 9. abuse limits (restart with tight limits; ban time 4 s)
+mA = None
+stop_gateway(); time.sleep(1)
+start_gateway(dict(MAX_BAD_LOGINS='3', BAN_SECONDS='4', NEW_ADDR_PER_MIN='2', SUBMITS_PER_SEC='3', REJECT_BAN_MIN='5', MAX_ADDRS_PER_IP='9', MIN_DIFF='2000'))
+def gwlog(): return open(os.path.join(tmp, 'gw.log')).read()
+def wait_unbanned():
+    time.sleep(5)
+
+m = Miner(A + '.low+10')
+dd = 0xFFFFFFFF // int.from_bytes(bytes.fromhex(m.job['target']), 'little') if len(m.job['target']) == 8 else 0
+check(m.job is not None and 1800 <= dd <= 2200, 'requested +10 difficulty is raised to the minimum (job difficulty %d)' % dd)
+m2 = Miner(B); check(m2.job is not None, 'second address starts (2nd new address this minute)')
+c = Miner(C); check(c.resp and 'error' in c.resp and 'busy' in c.resp['error']['message'], 'third NEW address within a minute is refused (global start-up rate limit); got %r' % (c.resp,))
+m2.close()
+
+# share flood: way over 3 shares/s sustained (burst 9) -> disconnected + short ban
+mf = Miner(A + '.flood')
+for i in range(30):
+    mf.n += 1
+    try:
+        mf.f.write((json.dumps({'id': mf.n, 'jsonrpc': '2.0', 'method': 'submit', 'params': {'id': mf.sid, 'job_id': mf.job['job_id'], 'nonce': '%08x' % mf.n, 'result': share_hash(10000)}}) + '\n').encode()); mf.f.flush()
+    except OSError: break
+got = 0; closed = False
+mf.s.settimeout(5)
+try:
+    while True:
+        line = mf.f.readline()
+        if not line: closed = True; break
+        got += 1
+except (OSError, socket.timeout): pass
+check(closed and got < 30, 'share flood: connection dropped after %d of 30 replies' % got)
+check('share flood' in gwlog(), 'share flood is logged as the reason')
+x = Miner(A + '.next'); check(x.resp is None or x.job is None, 'banned IP is refused right away')
+wait_unbanned()
+x = Miner(A + '.after'); check(x.job is not None, 'ban expires and the IP can mine again'); x.close()
+
+# rejected-share ban: only bad shares
+mr = Miner(A + '.bad'); closed = False
+mr.s.settimeout(5)
+for i in range(7):
+    try:
+        mr.n += 1
+        mr.f.write((json.dumps({'id': mr.n, 'jsonrpc': '2.0', 'method': 'submit', 'params': {'id': mr.sid, 'job_id': mr.job['job_id'], 'nonce': '%08x' % (mr.n * 31), 'result': 'ff' * 32}}) + '\n').encode()); mr.f.flush()
+        if not mr.f.readline(): closed = True; break
+    except (OSError, socket.timeout): closed = True; break
+check(closed and 'rejected vs' in gwlog(), 'connection that only sends rejected shares is dropped and its IP banned')
+wait_unbanned()
+
+# bad-login ban: 3 bad usernames -> banned even for a valid login
+for i in range(3): Miner('nonsense%d' % i)
+v = Miner(A + '.valid'); check(v.resp is None or v.job is None, '3 invalid logins ban the IP (a valid login is refused too)')
+check('too many invalid logins' in gwlog(), 'ban reason logged')
+wait_unbanned()
+v = Miner(A + '.valid2'); check(v.job is not None, 'ban expires after BAN_SECONDS'); v.close()
 cleanup()
 print('ALL GATEWAY TESTS PASSED')
