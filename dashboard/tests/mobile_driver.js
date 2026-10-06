@@ -1,0 +1,33 @@
+const { spawn } = require('child_process'); const fs = require('fs');
+const OUT = process.argv[2]; const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+(async () => {
+  const chrome = spawn('/usr/bin/chromium', ['--headless=new','--no-sandbox','--disable-gpu','--remote-debugging-port=9334','--user-data-dir=/tmp/cdp-profile2','about:blank'], { stdio: 'ignore' });
+  let targets; for (let i = 0; i < 40; i++) { try { targets = await (await fetch('http://127.0.0.1:9334/json')).json(); if (targets.length) break; } catch (e) {} await sleep(500); }
+  const ws = new WebSocket(targets.find(t => t.type === 'page').webSocketDebuggerUrl); await new Promise(r => ws.addEventListener('open', r));
+  let id = 0; const pending = new Map(); const logs = [];
+  ws.addEventListener('message', (m) => { const d = JSON.parse(m.data); if (d.id && pending.has(d.id)) { pending.get(d.id)(d); pending.delete(d.id); } else if (d.method === 'Runtime.exceptionThrown') logs.push('EXC ' + JSON.stringify(d.params.exceptionDetails.exception && d.params.exceptionDetails.exception.description)); });
+  const send = (method, params = {}) => new Promise(r => { const i = ++id; pending.set(i, r); ws.send(JSON.stringify({ id: i, method, params })); });
+  const ev = async (e) => (await send('Runtime.evaluate', { expression: e, returnByValue: true, awaitPromise: true })).result.result.value;
+  const shot = async (n) => { const r = await send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true }); fs.writeFileSync(OUT + '/' + n + '.png', Buffer.from(r.result.data, 'base64')); };
+  await send('Runtime.enable'); await send('Page.enable');
+  await send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true });
+  await send('Page.navigate', { url: 'http://127.0.0.1:8111/' }); await sleep(3500);
+  const t = (s) => ev('document.querySelector(' + JSON.stringify(s) + ').innerText');
+  console.log('target height   :', await t('#targetHeight'), '(current', await t('#height') + ')');
+  console.log('mining status   :', await t('#miningStatus'));
+  console.log('hashrate/miners :', await t('#hr'), '|', await t('#miners'), '| shares', await t('#shares'), '| blocks', await t('#blocksTotal'), '| ttf', await t('#ttf'), '| share', await t('#netShare'));
+  console.log('chart rows      :', await ev("[...document.querySelectorAll('.chartrow')].map(r => r.querySelector('.name').innerText + '=' + r.querySelector('.num').innerText + ' (' + Math.round(parseFloat(r.querySelector('.fill').style.width)) + '%)').join(' | ')"));
+  console.log('recent blocks   :', await t('#recent'));
+  console.log('workers         :', await ev("[...document.querySelectorAll('#workers tr')].map(r => r.cells[0].innerText + ' / ' + r.cells[5].innerText).join(' || ')"));
+  console.log('no full address visible in body text:', await ev("!/Safex[1-9A-HJ-NP-Za-km-z]{60,}/.test(document.body.innerText)"));
+  console.log('page overflows horizontally:', await ev('document.documentElement.scrollWidth > window.innerWidth'));
+  const NEW = 'Safex5zGFMJSFcUEBk4ZqvZD8HRRVycZ5RWgDJPUzufecPxcsUGPZEJFbmnZ9MdqcBd6YYj39TdeAWmwWDg6pEqQD4HGeSeo34e2N';
+  await ev("(()=>{const i=document.getElementById('myaddr'); i.value=" + JSON.stringify(NEW) + "; i.dispatchEvent(new Event('input'));})()"); await sleep(1500);
+  console.log('command shown   :', await t('#xmrigCmd')); console.log('command copied  :', await ev("document.getElementById('xmrigCmd').dataset.full"));
+  console.log('(you) tags      :', await ev("document.querySelectorAll('.you').length"));
+  console.log('mempool/uptime/disk:', await t('#mempool'), '|', await t('#uptime'), '|', await t('#diskfree'));
+  console.log('recent blocks tbl :', await ev("[...document.querySelectorAll('#recentChain tr')].slice(0,4).map(r => [...r.cells].map(c => c.innerText).join(' / ')).join(' || ')"), '| rows', await ev("document.querySelectorAll('#recentChain tr').length"));
+  console.log('mined-via cells   :', await ev("[...document.querySelectorAll('#recentChain tr')].map(r => r.cells[5].innerText).filter(x => x !== 'network').join(' | ')"));
+  console.log('errors:', JSON.stringify(logs));
+  await shot('mobile-1'); ws.close(); chrome.kill(); process.exit(0);
+})().catch(e => { console.error(e); process.exit(1); });
