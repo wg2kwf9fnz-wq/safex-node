@@ -188,7 +188,7 @@ d = Miner(B); check(d.job is not None, 'address B can mine again after restart (
 # 8. chain info endpoint (public chain data for the dashboard)
 req = urllib.request.Request('http://127.0.0.1:%d/chain' % API, headers={'Authorization': 'Bearer tok'})
 ch = json.load(urllib.request.urlopen(req, timeout=10))
-check(ch['mempool'] == 3 and ch['tx_count'] == 1234 and len(ch['blocks']) == 12, '/chain: mempool, tx count and 12 recent blocks')
+check(ch['mempool'] == 3 and ch['tx_count'] == 1234 and len(ch['blocks']) == 100, '/chain: mempool, tx count and 100 recent blocks')
 hs = [b['height'] for b in ch['blocks']]
 check(hs == sorted(hs, reverse=True) and hs[0] == TPL['height'] - 1, '/chain: newest first, top block is height-1')
 check(abs(ch['blocks'][0]['reward'] - 400.0) < 1e-9, '/chain: reward converted from atomic units (400 SFX)')

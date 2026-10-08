@@ -23,9 +23,10 @@ class H(http.server.BaseHTTPRequestHandler):
         if p=='/' or p=='/index.html':
             b=open('/data/projects/safex-node/dashboard/index.html','rb').read(); self.send_response(200); self.send_header('Content-Type','text/html'); self.send_header('Content-Length',str(len(b))); self.end_headers(); self.wfile.write(b); return
         if p=='/api/get_info': return self.send({'status':'OK','mainnet':True,'offline':False,'height':2099579,'target_height':0,'tx_pool_size':2,'start_time':now-3*86400-5*3600,'free_space':2400000000000,'incoming_connections_count':3,'outgoing_connections_count':8,'difficulty':35022775,'target':120})
+        if p=='/storage.json': return self.send({'used_bytes':187*1024**3+123456789,'updated':now})
         if p=='/stratum-api/state': return self.send(STATE)
         if p=='/stratum-api/chain':
-            blocks=[{'height':2101413-i,'hash':'%064x'%(2101413-i),'timestamp':now-120*i-30,'size':(96 if i%3 else 3937),'txs':(0 if i%3 else 2),'reward':400.0,'orphan':False,'found_by':(A2 if i==2 else (A1 if i==7 else None))} for i in range(12)]
+            blocks=[{'height':2101413-i,'hash':'%064x'%(2101413-i),'timestamp':now-120*i-30,'size':(96 if i%3 else 3937),'txs':(0 if i%3 else 2),'reward':400.0,'orphan':False,'found_by':(A2 if i==2 else (A1 if i==7 else None))} for i in range(100)]
             return self.send({'height':2101414,'mempool':2,'blocks':blocks,'now':now})
         self.send({},404)
 socketserver.TCPServer.allow_reuse_address=True

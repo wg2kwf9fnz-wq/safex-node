@@ -29,6 +29,9 @@
     th { color: #999; font-weight: 500; }
     code { background: #111; padding: 2px 6px; border-radius: 4px; word-break: break-all; }
     .tablewrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    /* long tables (recent blocks): fixed height, scroll inside the card, header stays visible */
+    .scrollbox { max-height: 480px; overflow-y: auto; border: 1px solid #2a2a2a; border-radius: 8px; color-scheme: dark; }
+    .scrollbox th { position: sticky; top: 0; background: #1c1c1c; z-index: 1; box-shadow: 0 1px 0 #2a2a2a; }
     .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; background: #555; }
     .dot.on { background: #4caf50; }
     .you { color: #4caf50; font-size: 12px; margin-left: 6px; }
@@ -45,6 +48,7 @@
       .value { font-size: 20px; }
       .grid { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
       .chartrow { grid-template-columns: 100px 1fr 30px; gap: 8px; }
+      .scrollbox { max-height: 380px; }
     }
   </style>
 </head>
@@ -64,7 +68,7 @@
       <div class="card"><div class="label">Est. Network Hashrate</div><div id="netHashrate" class="value">—</div></div>
       <div class="card"><div class="label">Mempool (pending txs)</div><div id="mempool" class="value">—</div></div>
       <div class="card"><div class="label">Node uptime</div><div id="uptime" class="value">—</div></div>
-      <div class="card"><div class="label">Disk free</div><div id="diskfree" class="value">—</div></div>
+      <div class="card"><div class="label">Node storage used</div><div id="storageUsed" class="value">—</div></div>
     </div>
 
     <div class="sync card">
@@ -75,10 +79,11 @@
 
     <div class="card wide">
       <div class="label">Recent blocks <span class="muted">&mdash; Safex is a privacy chain: amounts and addresses are hidden on-chain, so only public block data is shown</span></div>
-      <div class="tablewrap"><table style="min-width:460px">
+      <div class="tablewrap scrollbox"><table style="min-width:460px">
         <thead><tr><th>Height</th><th>Age</th><th>Txs</th><th>Size</th><th>Reward</th><th>Mined via</th></tr></thead>
         <tbody id="recentChain"><tr><td colspan="6" class="muted">Loading...</td></tr></tbody>
       </table></div>
+      <div id="chainCount" class="muted" style="margin-top:8px"></div>
     </div>
 
     <h2>Solo Mining (Stratum)</h2>
@@ -192,7 +197,6 @@
         $('netHashrate').textContent = fmtHash(lastNetHash);
         $('mempool').textContent = data.tx_pool_size === undefined ? '—' : Number(data.tx_pool_size).toLocaleString();
         $('uptime').textContent = data.start_time ? fmtUptime(Date.now() / 1000 - data.start_time) : '—';
-        $('diskfree').textContent = data.free_space ? fmtBytes(data.free_space) : '—';
         const height = Number(data.height);
         const target = Math.max(Number(data.target_height), height);
         const percent = target > 0 ? Math.min(100, (height / target) * 100) : 0;
@@ -209,7 +213,9 @@
         if (!r.ok) throw new Error('HTTP ' + r.status);
         const c = await r.json();
         const me = myAddr();
-        setHtml('recentChain', (c.blocks || []).slice(0, 10).map(b => {
+        const shown = (c.blocks || []).slice(0, 100);
+        $('chainCount').textContent = shown.length ? 'Showing the last ' + shown.length + ' blocks (scroll for older ones)' : '';
+        setHtml('recentChain', shown.map(b => {
           const via = b.found_by
             ? '<span title="' + esc(b.found_by) + '">' + esc(shorten(b.found_by)) + '</span>' + youTag(b.found_by)
             : '<span class="muted">network</span>';
@@ -218,6 +224,19 @@
         }).join('') || '<tr><td colspan="6" class="muted">No blocks yet</td></tr>');
       } catch (e) {
         setHtml('recentChain', '<tr><td colspan="6" class="muted">Recent blocks unavailable (' + esc(e.message) + ')</td></tr>');
+      }
+    }
+
+    // Disk space used by the node's data directory. Written every minute by the dashboard container itself
+    // (the node's get_info only reports free space, not how much the chain takes up).
+    async function updateStorage() {
+      try {
+        const r = await fetch('/storage.json', { cache: 'no-store' });
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const s = await r.json();
+        $('storageUsed').textContent = s.used_bytes > 0 ? fmtBytes(s.used_bytes) : '—';
+      } catch (e) {
+        $('storageUsed').textContent = '—';
       }
     }
 
@@ -286,11 +305,12 @@
     });
 
     // Node and mining panels update independently so one failing never blanks the other.
-    updateNode(); updateMining(); updateChain();
+    updateNode(); updateMining(); updateChain(); updateStorage();
+    setInterval(() => { if (!document.hidden) updateStorage(); }, 60000);
     setInterval(() => { if (!document.hidden) updateChain(); }, 20000);
     setInterval(() => { if (!document.hidden) updateNode(); }, 10000);
     setInterval(() => { if (!document.hidden) updateMining(); }, 10000);
-    document.addEventListener('visibilitychange', () => { if (!document.hidden) { updateNode(); updateMining(); updateChain(); } });
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) { updateNode(); updateMining(); updateChain(); updateStorage(); } });
   </script>
 </body>
 </html>

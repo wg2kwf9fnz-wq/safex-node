@@ -45,6 +45,7 @@ MIN_DIFF       = env('MIN_DIFF', 2000)                 # lowest +difficulty a mi
 IDLE_CONN      = env('IDLE_CONN', 1800)                # drop a connection that sends nothing for this long
 EXEMPT_PRIVATE = env('EXEMPT_PRIVATE_IPS', 1)          # 1 = LAN/loopback/Tailscale are never limited or banned
 CHAIN_CACHE    = 15
+CHAIN_BLOCKS   = max(1, min(500, int(env('CHAIN_BLOCKS', 100))))   # recent blocks returned by /chain
 MAX_ADDRS_IP   = env('MAX_ADDRS_PER_IP', 8)
 IDLE_STOP      = env('IDLE_STOP', 600)              # seconds an instance with no miners is kept alive
 PORT_BASE      = env('INSTANCE_PORT_BASE', 30000)
@@ -724,7 +725,7 @@ def chain_info():
         info = _rpc('/get_info')
         top = int(info['height']) - 1
         hdrs = _rpc('/json_rpc', {'jsonrpc': '2.0', 'id': 0, 'method': 'get_block_headers_range',
-                                  'params': {'start_height': max(0, top - 11), 'end_height': top}})['result']['headers']
+                                  'params': {'start_height': max(0, top - (CHAIN_BLOCKS - 1)), 'end_height': top}})['result']['headers']
         with STATE.lock:
             ours = {b['height']: b['address'] for b in STATE.blocks}
         blocks = [dict(height=h['height'], hash=h['hash'], timestamp=h['timestamp'], size=h['block_size'],
