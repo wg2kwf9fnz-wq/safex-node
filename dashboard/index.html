@@ -34,6 +34,11 @@
     .scrollbox th { position: sticky; top: 0; background: #1c1c1c; z-index: 1; box-shadow: 0 1px 0 #2a2a2a; }
     .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; background: #555; }
     .dot.on { background: #4caf50; }
+    .copybtn { margin-left: 8px; padding: 4px 10px; border: 0; border-radius: 6px; background: #4caf50; color: #111; font-weight: 600; cursor: pointer; }
+    details.help { margin-top: 12px; }
+    details.help summary { cursor: pointer; color: #bbb; }
+    details.help ol { margin: 8px 0 0; padding-left: 20px; }
+    details.help li { margin-bottom: 6px; }
     .you { color: #4caf50; font-size: 12px; margin-left: 6px; }
     /* blocks-per-address chart */
     .chartrow { display: grid; grid-template-columns: 130px 1fr 36px; align-items: center; gap: 10px; margin: 8px 0; font-size: 14px; }
@@ -58,7 +63,6 @@
     <div id="status" class="status">Connecting to node...</div>
 
     <div class="grid">
-      <div class="card"><div class="label">Network</div><div id="network" class="value">—</div></div>
       <div class="card"><div class="label">Status</div><div id="nodeStatus" class="value">—</div></div>
       <div class="card"><div class="label">Current Height</div><div id="height" class="value">—</div></div>
       <div class="card"><div class="label">Target Height</div><div id="targetHeight" class="value">—</div></div>
@@ -94,16 +98,33 @@
       <div class="value small" id="stratumUrl">stratum+tcp://—:17404</div>
       <p class="muted" style="margin-bottom:6px">Your Safex address (only used to build the command below, it is not sent anywhere):</p>
       <input id="myaddr" type="text" placeholder="Safex5..." spellcheck="false" autocomplete="off">
-      <p class="muted"><code id="xmrigCmd">xmrig -a rx/sfx -o HOST:17404 -u YOUR_SAFEX_ADDRESS.rig1 -p x</code>
-        <button id="copyCmd" type="button" style="margin-left:8px;padding:4px 10px;border:0;border-radius:6px;background:#4caf50;color:#111;font-weight:600;cursor:pointer">Copy</button>
+      <p class="muted" style="margin-bottom:2px">Miner on your <b>home network</b>:</p>
+      <p class="muted" style="margin-top:0"><code id="xmrigCmd">xmrig -a rx/sfx -o HOST:17404 -u YOUR_SAFEX_ADDRESS.rig1 -p x</code>
+        <button id="copyCmd" type="button" class="copybtn">Copy</button>
         <span id="copyMsg" class="ok"></span></p>
+      <p class="muted" style="margin-bottom:6px">Miner <b>outside your network</b> (rented hashrate, a friend's rig). Your public hostname or IP address (only kept in this browser):</p>
+      <input id="pubhost" type="text" placeholder="e.g. mynode.duckdns.org or 203.0.113.5" spellcheck="false" autocomplete="off">
+      <p class="muted"><code id="xmrigCmdExt">xmrig -a rx/sfx -o YOUR_PUBLIC_HOST:17404 -u YOUR_SAFEX_ADDRESS.rig1 -p x</code>
+        <button id="copyCmdExt" type="button" class="copybtn">Copy</button>
+        <span id="copyMsgExt" class="ok"></span></p>
       <p class="muted">
         The username is your <b>Safex address</b>, optionally followed by <code>.workername</code> and <code>+difficulty</code>
         (e.g. <code>Safex5...abc.rig1+200000</code>; default difficulty is 50,000). If one of your miners finds a block, the
         <b>whole block reward goes to your address</b>. This is solo mining: no pool, no fees, no payouts to manage.
-        For miners outside your home network (e.g. MiningRigRentals) forward TCP port 17404 on your router to this Umbrel.
         Algorithm: <b>RandomSFX (rx/sfx)</b>.
       </p>
+      <details class="help muted">
+        <summary>How to let miners outside your network connect</summary>
+        <ol>
+          <li><b>Forward the port on your router:</b> TCP <code>17404</code> &rarr; your Umbrel's local IP, port <code>17404</code>. Give the Umbrel a fixed local address (a DHCP reservation in the router) so the forward keeps pointing at it.</li>
+          <li><b>That is all you need.</b> Don't put a reverse proxy (Zoraxy, nginx, ...) in front of the stratum port: the stratum server would then see the proxy's address instead of the miner's, so its ban and rate limits can no longer tell miners apart, and local addresses are never limited at all.</li>
+          <li><b>Use a hostname if your IP changes:</b> a free dynamic DNS name (DuckDNS, No-IP, ...) kept up to date by your router, and put it in the box above.</li>
+          <li><b>Test from outside</b> (a phone on mobile data, not your Wi-Fi): <code>nc -vz YOUR_PUBLIC_HOST 17404</code> or an online open-port checker. If it connects, miners can too.</li>
+          <li><b>Won't connect even though the forward is right?</b> Your provider may use CGNAT: if the WAN address shown in your router is not the address a &ldquo;what is my IP&rdquo; site shows (or starts with 100.64&ndash;100.127), port forwarding cannot work. Ask the provider for a public IP, or reach the node over Tailscale instead.</li>
+          <li><b>Only forward 17404.</b> Never expose the node's RPC port (17402). Forwarding the node's peer-to-peer port 17401 is optional and helps the network.</li>
+          <li><b>Rented rigs (e.g. MiningRigRentals):</b> pool = your public host, port = <code>17404</code>, username = <code>YOUR_SAFEX_ADDRESS.rigname</code> (add <code>+difficulty</code> to suit the rig), password = <code>x</code>, algorithm RandomSFX.</li>
+        </ol>
+      </details>
     </div>
 
     <div class="grid wide">
@@ -176,6 +197,8 @@
       return s.length > 24 ? s.slice(0, 12) + '...' + s.slice(-6) : s;
     }
     function myAddr() { const a = ($('myaddr').value || '').trim(); return ADDR_RE.test(a) ? a : ''; }
+    // hostname or IP typed by the user: strip scheme, port and path, keep only characters valid in a hostname
+    function pubHost() { return ($('pubhost').value || '').trim().replace(/^[a-z+]+:\/\//i, '').replace(/[:\/].*$/, '').replace(/[^A-Za-z0-9.-]/g, ''); }
     function youTag(addr) { return addr && addr === myAddr() ? '<span class="you">(you)</span>' : ''; }
 
     async function updateNode() {
@@ -184,7 +207,6 @@
         if (!response.ok) throw new Error('HTTP ' + response.status);
         const data = await response.json();
         $('status').textContent = data.offline ? 'Node is offline' : 'Node is connected';
-        $('network').textContent = data.mainnet ? 'Mainnet' : data.testnet ? 'Testnet' : 'Stagenet';
         $('nodeStatus').textContent = data.status;
         $('height').textContent = Number(data.height).toLocaleString();
         // The node reports target_height = 0 once it is synced; never show a target below the current height.
@@ -254,9 +276,12 @@
       const host = window.location.hostname || 'umbrel.local';
       $('stratumUrl').textContent = 'stratum+tcp://' + host + ':17404';
       const a = myAddr();
-      const cmd = (addr) => 'xmrig -a rx/sfx -o ' + host + ':17404 -u ' + (addr || 'YOUR_SAFEX_ADDRESS') + '.rig1 -p x';
+      const cmd = (addr, h) => 'xmrig -a rx/sfx -o ' + (h || host) + ':17404 -u ' + (addr || 'YOUR_SAFEX_ADDRESS') + '.rig1 -p x';
+      const pub = pubHost();
       $('xmrigCmd').textContent = cmd(a ? shorten(a) : '');   // condensed on screen
       $('xmrigCmd').dataset.full = cmd(a);                     // full command is what gets copied
+      $('xmrigCmdExt').textContent = cmd(a ? shorten(a) : '', pub || 'YOUR_PUBLIC_HOST');
+      $('xmrigCmdExt').dataset.full = cmd(a, pub || 'YOUR_PUBLIC_HOST');
       let s;
       try {
         const r = await fetch('/stratum-api/state', { cache: 'no-store' });
@@ -288,17 +313,23 @@
       setHtml('workers', rows.length ? rows.join('') : '<tr><td colspan="6" class="muted">No active workers</td></tr>');
     }
 
-    $('copyCmd').addEventListener('click', () => {
-      const text = $('xmrigCmd').dataset.full || $('xmrigCmd').textContent;
-      const done = () => { $('copyMsg').textContent = ' Copied'; setTimeout(() => { $('copyMsg').textContent = ''; }, 2000); };
-      if (navigator.clipboard && window.isSecureContext) { navigator.clipboard.writeText(text).then(done); return; }
-      const ta = document.createElement('textarea');       // plain http (e.g. over Tailscale): clipboard API unavailable
-      ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0'; document.body.appendChild(ta); ta.select();
-      try { document.execCommand('copy'); done(); } catch (e) { $('copyMsg').textContent = ' Select and copy manually'; }
-      document.body.removeChild(ta);
-    });
+    function wireCopy(btnId, codeId, msgId) {
+      $(btnId).addEventListener('click', () => {
+        const text = $(codeId).dataset.full || $(codeId).textContent;
+        const done = () => { $(msgId).textContent = ' Copied'; setTimeout(() => { $(msgId).textContent = ''; }, 2000); };
+        if (navigator.clipboard && window.isSecureContext) { navigator.clipboard.writeText(text).then(done); return; }
+        const ta = document.createElement('textarea');       // plain http (e.g. over Tailscale): clipboard API unavailable
+        ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0'; document.body.appendChild(ta); ta.select();
+        try { document.execCommand('copy'); done(); } catch (e) { $(msgId).textContent = ' Select and copy manually'; }
+        document.body.removeChild(ta);
+      });
+    }
+    wireCopy('copyCmd', 'xmrigCmd', 'copyMsg');
+    wireCopy('copyCmdExt', 'xmrigCmdExt', 'copyMsgExt');
 
     $('myaddr').value = localStorage.getItem('safexAddr') || '';
+    $('pubhost').value = localStorage.getItem('safexPubHost') || '';
+    $('pubhost').addEventListener('input', () => { localStorage.setItem('safexPubHost', pubHost()); updateMining(); });
     $('myaddr').addEventListener('input', () => {
       if (myAddr()) localStorage.setItem('safexAddr', myAddr());
       updateMining();
