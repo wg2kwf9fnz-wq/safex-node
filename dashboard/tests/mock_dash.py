@@ -22,6 +22,11 @@ class H(http.server.BaseHTTPRequestHandler):
         p=self.path
         if p=='/' or p=='/index.html':
             b=open('/data/projects/safex-node/dashboard/index.html','rb').read(); self.send_response(200); self.send_header('Content-Type','text/html'); self.send_header('Content-Length',str(len(b))); self.end_headers(); self.wfile.write(b); return
+        if p.startswith('/api/block_headers'):
+            import math, urllib.parse
+            q=urllib.parse.parse_qs(urllib.parse.urlparse(p).query); a=int(q['start'][0]); b=int(q['end'][0]); top=2099578
+            hs=[{'height':h,'hash':'%064x'%h,'timestamp':now-120*(top-h),'difficulty':int(35e6+6e6*math.sin(h/260.0)+2e6*math.sin(h/23.0)+(h%7)*1e5-(h-top)*900),'num_txes':0,'block_size':96,'reward':400*10**10,'orphan_status':False} for h in range(a,b+1)]
+            return self.send({'id':'0','jsonrpc':'2.0','result':{'headers':hs,'status':'OK'}})
         if p=='/api/get_info': return self.send({'status':'OK','mainnet':True,'offline':False,'height':2099579,'target_height':0,'tx_pool_size':2,'start_time':now-3*86400-5*3600,'free_space':2400000000000,'incoming_connections_count':3,'outgoing_connections_count':8,'difficulty':35022775,'target':120})
         if p=='/storage.json': return self.send({'used_bytes':187*1024**3+123456789,'updated':now})
         if p=='/stratum-api/state': return self.send(STATE)

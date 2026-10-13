@@ -39,6 +39,18 @@
     details.help summary { cursor: pointer; color: #bbb; }
     details.help ol { margin: 8px 0 0; padding-left: 20px; }
     details.help li { margin-bottom: 6px; }
+    /* network difficulty graph */
+    .rangebtns { float: right; }
+    .rangebtns button { background: #2a2a2a; color: #ccc; border: 0; padding: 4px 12px; font-size: 12px; cursor: pointer; }
+    .rangebtns button:first-child { border-radius: 6px 0 0 6px; }
+    .rangebtns button:last-child { border-radius: 0 6px 6px 0; }
+    .rangebtns button.on { background: #4caf50; color: #111; font-weight: 600; }
+    .diffstats { display: flex; flex-wrap: wrap; gap: 8px 28px; margin: 14px 0 6px; }
+    .diffstats .k { color: #999; font-size: 12px; }
+    .diffstats .v { font-size: 16px; font-weight: 600; }
+    #diffwrap { position: relative; margin-top: 8px; }
+    #diffsvg { width: 100%; height: auto; display: block; touch-action: pan-y; }
+    #difftip { position: absolute; pointer-events: none; background: #000d; border: 1px solid #444; border-radius: 6px; padding: 6px 8px; font-size: 12px; line-height: 1.4; white-space: nowrap; display: none; z-index: 2; }
     .you { color: #4caf50; font-size: 12px; margin-left: 6px; }
     /* blocks-per-address chart */
     .chartrow { display: grid; grid-template-columns: 130px 1fr 36px; align-items: center; gap: 10px; margin: 8px 0; font-size: 14px; }
@@ -79,6 +91,24 @@
       <div class="label">Synchronization</div>
       <div id="syncText" class="value">—</div>
       <div class="bar"><div id="progress" class="progress"></div></div>
+    </div>
+
+    <div class="card wide">
+      <div class="label">Network difficulty history
+        <span class="rangebtns"><button type="button" id="dr24" class="on">24 h</button><button type="button" id="dr168">7 days</button></span>
+      </div>
+      <div class="diffstats">
+        <div><div class="k">Now</div><div class="v" id="dsNow">—</div></div>
+        <div><div class="k">Average</div><div class="v" id="dsAvg">—</div></div>
+        <div><div class="k">Lowest</div><div class="v" id="dsMin">—</div></div>
+        <div><div class="k">Highest</div><div class="v" id="dsMax">—</div></div>
+        <div><div class="k">Change over range</div><div class="v" id="dsChg">—</div></div>
+      </div>
+      <div id="diffwrap">
+        <svg id="diffsvg" viewBox="0 0 800 260" preserveAspectRatio="none"></svg>
+        <div id="difftip"></div>
+      </div>
+      <div id="diffnote" class="muted" style="margin-top:6px">Loading...</div>
     </div>
 
     <div class="card wide">
@@ -156,6 +186,7 @@
     const ADDR_RE = /^Safex[1-9A-HJ-NP-Za-km-z]{90,110}$/;
     let lastDifficulty = 0;
     let lastNetHash = 0;
+    let lastHeight = 0;
 
     function fmtHash(h) {
       if (!h || !isFinite(h)) return '0 H/s';
@@ -209,6 +240,7 @@
         $('status').textContent = data.offline ? 'Node is offline' : 'Node is connected';
         $('nodeStatus').textContent = data.status;
         $('height').textContent = Number(data.height).toLocaleString();
+        const firstHeight = !lastHeight; lastHeight = Number(data.height) || 0; if (firstHeight) updateDifficulty();
         // The node reports target_height = 0 once it is synced; never show a target below the current height.
         $('targetHeight').textContent = Math.max(Number(data.target_height) || 0, Number(data.height)).toLocaleString();
         $('incoming').textContent = data.incoming_connections_count;
@@ -260,6 +292,114 @@
       } catch (e) {
         $('storageUsed').textContent = '—';
       }
+    }
+
+    // ---- network difficulty history. Every block header on the chain carries its difficulty, so the full history
+    // is read from the node itself (nothing to record or lose). Headers are cached in memory and only new blocks are fetched.
+    const DIFF = { pts: new Map(), lo: 0, hi: 0, hours: Number(localStorage.getItem('safexDiffHours')) === 168 ? 168 : 24, busy: false, top: 0, shown: [] };
+    const BLOCK_TIME = 120;
+    function fmtShort(n) {
+      n = Number(n) || 0;
+      if (n >= 1e9) return (n / 1e9).toFixed(2) + ' G';
+      if (n >= 1e6) return (n / 1e6).toFixed(2) + ' M';
+      if (n >= 1e3) return (n / 1e3).toFixed(1) + ' k';
+      return String(Math.round(n));
+    }
+    async function fetchHeaders(a, b) {
+      for (let s = a; s <= b; s += 1000) {
+        const e = Math.min(b, s + 999);
+        const r = await fetch('/api/block_headers?start=' + s + '&end=' + e, { cache: 'no-store' });
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const j = await r.json();
+        const hs = j && j.result && j.result.headers;
+        if (!hs) throw new Error((j && j.error && j.error.message) || 'no headers returned');
+        hs.forEach(h => DIFF.pts.set(Number(h.height), { h: Number(h.height), t: Number(h.timestamp), d: Number(h.difficulty) }));
+      }
+    }
+    async function updateDifficulty() {
+      if (DIFF.busy || !lastHeight) return;
+      DIFF.busy = true;
+      try {
+        const top = lastHeight - 1;
+        const want = Math.max(0, top - DIFF.hours * 3600 / BLOCK_TIME + 1);
+        if (!DIFF.pts.size) {
+          await fetchHeaders(Math.floor(want), top);
+        } else {
+          if (want < DIFF.lo) await fetchHeaders(Math.floor(want), DIFF.lo - 1);
+          await fetchHeaders(Math.max(0, DIFF.hi - 9), top);    // re-read the newest blocks too (a reorg may replace them)
+        }
+        const keep = top - 7 * 24 * 3600 / BLOCK_TIME - 100;     // never hold more than ~7 days
+        for (const h of DIFF.pts.keys()) if (h < keep) DIFF.pts.delete(h);
+        const hs = [...DIFF.pts.keys()];
+        DIFF.lo = Math.min(...hs); DIFF.hi = Math.max(...hs); DIFF.top = top;
+        drawDifficulty();
+      } catch (e) {
+        $('diffnote').textContent = 'Difficulty history unavailable (' + e.message + ')';
+        if (!DIFF.pts.size) setHtml('diffsvg', '');
+      } finally { DIFF.busy = false; }
+    }
+    function drawDifficulty() {
+      const firstH = Math.max(DIFF.lo, DIFF.top - DIFF.hours * 3600 / BLOCK_TIME + 1);
+      const pts = [...DIFF.pts.values()].filter(p => p.h >= firstH).sort((a, b) => a.h - b.h);
+      if (pts.length < 2) { $('diffnote').textContent = 'Not enough blocks yet.'; return; }
+      const ds = pts.map(p => p.d), min = Math.min(...ds), max = Math.max(...ds), avg = ds.reduce((x, y) => x + y, 0) / ds.length;
+      const now = ds[ds.length - 1], first = ds[0], chg = first > 0 ? (now - first) / first * 100 : 0;
+      $('dsNow').textContent = fmtShort(now); $('dsAvg').textContent = fmtShort(avg);
+      $('dsMin').textContent = fmtShort(min); $('dsMax').textContent = fmtShort(max);
+      $('dsChg').textContent = (chg >= 0 ? '+' : '') + chg.toFixed(1) + '%';
+      $('dsChg').style.color = chg > 0.05 ? '#fb3' : chg < -0.05 ? '#4aa3f5' : '';
+      // at most ~400 plotted points: average the difficulty inside each bucket
+      const B = Math.min(pts.length, 400), per = pts.length / B, plot = [];
+      for (let i = 0; i < B; i++) {
+        const seg = pts.slice(Math.floor(i * per), Math.max(Math.floor(i * per) + 1, Math.floor((i + 1) * per)));
+        plot.push({ t: seg[Math.floor(seg.length / 2)].t, h: seg[Math.floor(seg.length / 2)].h, d: seg.reduce((x, p) => x + p.d, 0) / seg.length });
+      }
+      DIFF.shown = plot;
+      const W = 800, H = 260, L = 62, R = 12, T = 10, Bm = 28;
+      const t0 = plot[0].t, t1 = plot[plot.length - 1].t || t0 + 1, span = Math.max(1, t1 - t0);
+      const pad = Math.max((max - min) * 0.08, max * 0.01), y0 = Math.max(0, min - pad), y1 = max + pad;
+      const X = t => L + (t - t0) / span * (W - L - R), Y = d => T + (1 - (d - y0) / (y1 - y0)) * (H - T - Bm);
+      let svg = '';
+      for (let i = 0; i <= 4; i++) {
+        const v = y0 + (y1 - y0) * i / 4, y = Y(v).toFixed(1);
+        svg += '<line x1="' + L + '" x2="' + (W - R) + '" y1="' + y + '" y2="' + y + '" stroke="#2a2a2a"/>' +
+               '<text x="' + (L - 6) + '" y="' + (Number(y) + 4) + '" text-anchor="end" fill="#999" font-size="11">' + fmtShort(v) + '</text>';
+      }
+      for (let i = 0; i <= 4; i++) {
+        const t = t0 + span * i / 4, d = new Date(t * 1000);
+        const lab = DIFF.hours <= 24 ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                                     : d.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        svg += '<text x="' + X(t).toFixed(1) + '" y="' + (H - 8) + '" text-anchor="' + (i === 0 ? 'start' : i === 4 ? 'end' : 'middle') + '" fill="#999" font-size="11">' + esc(lab) + '</text>';
+      }
+      const line = plot.map((p, i) => (i ? 'L' : 'M') + X(p.t).toFixed(1) + ' ' + Y(p.d).toFixed(1)).join(' ');
+      svg += '<path d="' + line + ' L' + X(t1).toFixed(1) + ' ' + (H - Bm) + ' L' + X(t0).toFixed(1) + ' ' + (H - Bm) + ' Z" fill="#2478dc" opacity="0.18"/>' +
+             '<path d="' + line + '" fill="none" stroke="#4aa3f5" stroke-width="2" vector-effect="non-scaling-stroke" stroke-linejoin="round"/>' +
+             '<line id="dcur" x1="0" x2="0" y1="' + T + '" y2="' + (H - Bm) + '" stroke="#888" stroke-dasharray="3 3" style="display:none"/>' +
+             '<circle id="ddot" r="4" fill="#4aa3f5" stroke="#111" stroke-width="2" style="display:none"/>';
+      setHtml('diffsvg', svg);
+      DIFF.geom = { W, H, L, R, T, Bm, t0, span, y0, y1 };
+      $('diffnote').textContent = 'Last ' + (DIFF.hours === 24 ? '24 hours' : '7 days') + ', ' + pts.length.toLocaleString() + ' blocks (hover or touch the graph for details). Read from the blockchain, so it survives restarts.';
+    }
+    function diffHover(ev) {
+      const g = DIFF.geom, svg = $('diffsvg');
+      if (!g || !DIFF.shown.length) return;
+      const rect = svg.getBoundingClientRect(), cx = (ev.touches ? ev.touches[0].clientX : ev.clientX);
+      const t = g.t0 + Math.min(1, Math.max(0, ((cx - rect.left) / rect.width * g.W - g.L) / (g.W - g.L - g.R))) * g.span;
+      let best = DIFF.shown[0]; for (const p of DIFF.shown) if (Math.abs(p.t - t) < Math.abs(best.t - t)) best = p;
+      const x = g.L + (best.t - g.t0) / g.span * (g.W - g.L - g.R), y = g.T + (1 - (best.d - g.y0) / (g.y1 - g.y0)) * (g.H - g.T - g.Bm);
+      const cur = $('dcur'), dot = $('ddot'), tip = $('difftip');
+      cur.setAttribute('x1', x); cur.setAttribute('x2', x); cur.style.display = '';
+      dot.setAttribute('cx', x); dot.setAttribute('cy', y); dot.style.display = '';
+      tip.innerHTML = '<b>' + Math.round(best.d).toLocaleString() + '</b><br>block #' + best.h.toLocaleString() + '<br>' + esc(new Date(best.t * 1000).toLocaleString());
+      tip.style.display = 'block';
+      const px = x / g.W * rect.width, tw = tip.offsetWidth;
+      tip.style.left = Math.max(0, Math.min(rect.width - tw, px - tw / 2)) + 'px'; tip.style.top = '4px';
+    }
+    function diffLeave() { ['dcur', 'ddot'].forEach(id => { const e = $(id); if (e) e.style.display = 'none'; }); $('difftip').style.display = 'none'; }
+    function setDiffRange(h) {
+      DIFF.hours = h; localStorage.setItem('safexDiffHours', h);
+      $('dr24').classList.toggle('on', h === 24); $('dr168').classList.toggle('on', h === 168);
+      updateDifficulty();
     }
 
     function renderChart(addresses) {
@@ -336,6 +476,12 @@
     });
 
     // Node and mining panels update independently so one failing never blanks the other.
+    $('dr24').addEventListener('click', () => setDiffRange(24));
+    $('dr168').addEventListener('click', () => setDiffRange(168));
+    $('dr24').classList.toggle('on', DIFF.hours === 24); $('dr168').classList.toggle('on', DIFF.hours === 168);
+    $('diffsvg').addEventListener('mousemove', diffHover); $('diffsvg').addEventListener('touchmove', diffHover, { passive: true });
+    $('diffsvg').addEventListener('mouseleave', diffLeave); $('diffsvg').addEventListener('touchend', diffLeave);
+    setInterval(() => { if (!document.hidden) updateDifficulty(); }, 60000);
     updateNode(); updateMining(); updateChain(); updateStorage();
     setInterval(() => { if (!document.hidden) updateStorage(); }, 60000);
     setInterval(() => { if (!document.hidden) updateChain(); }, 20000);
