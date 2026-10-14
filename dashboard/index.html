@@ -53,18 +53,23 @@
     #difftip { position: absolute; pointer-events: none; background: #000d; border: 1px solid #444; border-radius: 6px; padding: 6px 8px; font-size: 12px; line-height: 1.4; white-space: nowrap; display: none; z-index: 2; }
     .you { color: #4caf50; font-size: 12px; margin-left: 6px; }
     /* blocks-per-address chart */
-    .chartrow { display: grid; grid-template-columns: 130px 1fr 36px; align-items: center; gap: 10px; margin: 8px 0; font-size: 14px; }
+    .chartrow { display: grid; grid-template-columns: 130px 1fr 36px 118px 22px; align-items: center; gap: 10px; margin: 8px 0; font-size: 14px; }
     .chartrow .name { font-family: ui-monospace, monospace; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .chartrow .track { background: #2a2a2a; border-radius: 6px; height: 22px; overflow: hidden; }
     .chartrow .fill { height: 100%; background: linear-gradient(90deg, #2478dc, #4aa3f5); min-width: 0; transition: width .4s; }
     .chartrow .num { text-align: right; font-weight: 600; }
+    .chartrow .sfx { text-align: right; font-size: 13px; color: #bbb; white-space: nowrap; }
+    .chartrow .rm { background: none; border: 0; color: #777; font-size: 20px; line-height: 1; padding: 0; cursor: pointer; }
+    .chartrow .rm:hover, .chartrow .rm:focus-visible { color: #f66; }
+    .chartrow .rm:disabled { opacity: .4; cursor: default; }
     @media (max-width: 600px) {
       body { padding: 16px; }
       h1 { font-size: 24px; }
       .card { padding: 16px; }
       .value { font-size: 20px; }
       .grid { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
-      .chartrow { grid-template-columns: 100px 1fr 30px; gap: 8px; }
+      .chartrow { grid-template-columns: 84px 1fr 26px 82px 22px; gap: 6px; }
+      .chartrow .sfx { font-size: 12px; }
       .scrollbox { max-height: 380px; }
     }
   </style>
@@ -164,6 +169,7 @@
       <div class="card"><div class="label">Est. time to next block (all miners)</div><div id="ttf" class="value">—</div></div>
       <div class="card"><div class="label">Share of network hashrate</div><div id="netShare" class="value">—</div></div>
       <div class="card"><div class="label">Blocks found (all addresses)</div><div id="blocksTotal" class="value">—</div></div>
+      <div class="card"><div class="label">SFX mined (all addresses)</div><div id="rewardTotal" class="value">—</div></div>
     </div>
 
     <div class="card wide">
@@ -406,11 +412,38 @@
       const rows = (addresses || []).filter(a => a.blocks > 0 || a.connected > 0 || a.hashrate > 0);
       if (!rows.length) { setHtml('chart', '<div class="muted">No miners yet</div>'); return; }
       const max = Math.max(1, ...rows.map(a => a.blocks));
-      setHtml('chart', rows.map(a =>
-        '<div class="chartrow"><div class="name" title="' + esc(a.address) + '">' + esc(shorten(a.address)) + youTag(a.address) + '</div>' +
-        '<div class="track"><div class="fill" style="width:' + (a.blocks / max * 100) + '%"></div></div>' +
-        '<div class="num">' + a.blocks + '</div></div>').join(''));
+      setHtml('chart', rows.map(a => {
+        const sfx = !a.blocks ? '' : (a.reward_pending && !a.reward ? '…' : fmtSfx(a.reward)) + ' SFX';
+        const sfxTip = a.reward_pending ? ' title="' + a.reward_pending + ' block(s) still waiting for the node to report their reward"' : '';
+        // an address with a miner connected right now cannot be removed (it would just reappear)
+        const rm = a.connected > 0 ? '<span></span>'
+          : '<button type="button" class="rm" data-addr="' + esc(a.address) + '" title="Remove this address from the list" aria-label="Remove this address from the list">&times;</button>';
+        return '<div class="chartrow"><div class="name" title="' + esc(a.address) + '">' + esc(shorten(a.address)) + youTag(a.address) + '</div>' +
+          '<div class="track"><div class="fill" style="width:' + (a.blocks / max * 100) + '%"></div></div>' +
+          '<div class="num">' + a.blocks + '</div><div class="sfx"' + sfxTip + '>' + sfx + '</div>' + rm + '</div>';
+      }).join(''));
     }
+
+    function fmtSfx(n) { return Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 2 }); }
+
+    // × next to an address: forget it (its recorded blocks and SFX total) after a confirmation.
+    // Only dashboard statistics are touched, never the blockchain or any coins.
+    $('chart').addEventListener('click', async (ev) => {
+      const btn = ev.target.closest('.rm');
+      if (!btn) return;
+      const addr = btn.dataset.addr;
+      if (!confirm('Remove ' + shorten(addr) + ' from the list?\n\nIts recorded blocks and SFX total are deleted from this dashboard (and the totals above shrink accordingly). The blockchain and any coins are not affected.')) return;
+      btn.disabled = true;
+      try {
+        const r = await fetch('/stratum-api/remove-address', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ address: addr }) });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(j.error || 'HTTP ' + r.status);
+        await updateMining();
+      } catch (e) {
+        btn.disabled = false;
+        alert('Could not remove the address: ' + e.message);
+      }
+    });
 
     async function updateMining() {
       const host = window.location.hostname || 'umbrel.local';
@@ -442,6 +475,7 @@
       $('ttf').textContent = hr > 0 && lastDifficulty > 0 ? fmtDuration(lastDifficulty / hr) : '—';
       $('netShare').textContent = hr > 0 && lastNetHash > 0 ? (hr / lastNetHash * 100).toFixed(2) + '%' : '—';
       $('blocksTotal').textContent = (sm.blocks || 0).toLocaleString();
+      $('rewardTotal').textContent = (sm.reward_pending && !sm.reward ? '…' : fmtSfx(sm.reward)) + ' SFX';
       renderChart(s.addresses);
       const rb = s.blocks || [];
       setHtml('recent', rb.length ? 'Recent blocks: ' + rb.slice(0, 5).map(b =>
