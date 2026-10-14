@@ -171,7 +171,7 @@ class State:
         self.lock = threading.Lock()
         self.workers = {}              # key -> dict
         self.windows = {}              # key -> deque[(ts, diff)]
-        self.blocks = []               # [{ts, height, address}]
+        self.blocks = []               # [{ts, height, address, reward}]  reward = atomic units, None until read from the node
         self.dirty = False
 
     def key(self, addr, name):
@@ -223,10 +223,36 @@ class State:
 
     def add_block(self, addr, height):
         with self.lock:
-            self.blocks.append(dict(ts=int(time.time()), height=int(height), address=addr))
+            self.blocks.append(dict(ts=int(time.time()), height=int(height), address=addr, reward=None))
             del self.blocks[:-2000]
             self.dirty = True
         log('BLOCK FOUND by', short(addr), 'at height', height)
+
+    def remove_address(self, addr):
+        """Forget an address: its recorded blocks and its (idle) workers.
+        Returns (blocks_removed, workers_removed), or None if a miner for this address is connected right now."""
+        with self.lock:
+            if any(w['address'] == addr and w['conns'] > 0 for w in self.workers.values()):
+                return None
+            before = len(self.blocks)
+            self.blocks = [b for b in self.blocks if b['address'] != addr]
+            ks = [k for k, w in self.workers.items() if w['address'] == addr]
+            for k in ks:
+                del self.workers[k]
+                self.windows.pop(k, None)
+            self.dirty = True
+            return before - len(self.blocks), len(ks)
+
+    def missing_rewards(self, limit=20):
+        with self.lock:
+            return [b['height'] for b in self.blocks if b.get('reward') is None][:limit]
+
+    def set_rewards(self, rewards):
+        with self.lock:
+            for b in self.blocks:
+                if b.get('reward') is None and b['height'] in rewards:
+                    b['reward'] = rewards[b['height']]
+                    self.dirty = True
 
     @staticmethod
     def last_active(w):
@@ -263,17 +289,25 @@ class State:
                                     rejected=w['rejected'], hashrate=hr, last_share=int(w['last_share']),
                                     connected=w['conns'] > 0, diff=w['diff']))
                 tot_hr += hr; tot_acc += w['accepted']; tot_rej += w['rejected']
-                a = per_addr.setdefault(w['address'], dict(address=w['address'], blocks=0, hashrate=0.0, connected=0, last_block=0))
+                a = per_addr.setdefault(w['address'], dict(address=w['address'], blocks=0, hashrate=0.0, connected=0, last_block=0, reward_atomic=0, reward_pending=0))
                 a['hashrate'] += hr; a['connected'] += w['conns']
             for b in self.blocks:
-                a = per_addr.setdefault(b['address'], dict(address=b['address'], blocks=0, hashrate=0.0, connected=0, last_block=0))
+                a = per_addr.setdefault(b['address'], dict(address=b['address'], blocks=0, hashrate=0.0, connected=0, last_block=0, reward_atomic=0, reward_pending=0))
                 a['blocks'] += 1; a['last_block'] = max(a['last_block'], b['ts'])
+                if b.get('reward') is None:
+                    a['reward_pending'] += 1          # reward not read from the node yet
+                else:
+                    a['reward_atomic'] += int(b['reward'])
+            for a in per_addr.values():
+                a['reward'] = a.pop('reward_atomic') / ATOMIC     # SFX
             workers.sort(key=lambda x: (-x['connected'], -x['last_share']))
             addresses = sorted(per_addr.values(), key=lambda a: (-a['blocks'], -a['hashrate']))
             return dict(now=int(now), ttl_hours=WORKER_TTL / 3600.0,
                         summary=dict(workers=len(workers), connected=connected, hashrate=tot_hr, accepted=tot_acc,
                                      rejected=tot_rej, addresses=len(addresses), instances=instances,
-                                     blocks=len(self.blocks)),
+                                     blocks=len(self.blocks),
+                                     reward=sum(a['reward'] for a in per_addr.values()),
+                                     reward_pending=sum(a['reward_pending'] for a in per_addr.values())),
                         workers=workers, addresses=addresses, blocks=self.blocks[-20:][::-1])
 
     def save(self):
@@ -718,6 +752,19 @@ def _rpc(path, body=None):
     with urllib.request.urlopen(req, timeout=8) as r:
         return json.loads(r.read())
 
+def fetch_rewards(heights):
+    """Block reward (atomic units) of the main-chain block at each height. Heights the node cannot answer yet are skipped."""
+    out = {}
+    for h in heights:
+        try:
+            r = _rpc('/json_rpc', {'jsonrpc': '2.0', 'id': 0, 'method': 'get_block_header_by_height', 'params': {'height': int(h)}})
+            hdr = r['result']['block_header']
+            if not hdr.get('orphan_status'):
+                out[h] = int(hdr['reward'])
+        except Exception:
+            pass
+    return out
+
 def chain_info():
     with _CHAIN_LOCK:
         if _CHAIN['data'] and time.time() - _CHAIN['at'] < CHAIN_CACHE:
@@ -739,6 +786,8 @@ def chain_info():
 
 
 # ---------------------------------------------------------------- HTTP API for the dashboard
+FULL_ADDR_RE = re.compile(r'^Safex[1-9A-HJ-NP-Za-km-z]{90,110}$')
+
 class Api(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
@@ -768,6 +817,35 @@ class Api(BaseHTTPRequestHandler):
                 return self._send(502, {'error': 'node not reachable: %s' % type(e).__name__})
         self._send(404, {'error': 'not found'})
 
+    def do_POST(self):
+        if API_TOKEN:
+            got = self.headers.get('Authorization', '')
+            if not hmac.compare_digest(got, 'Bearer ' + API_TOKEN):
+                return self._send(401, {'error': 'unauthorized'})
+        if self.path != '/remove-address':
+            return self._send(404, {'error': 'not found'})
+        # A plain cross-site form cannot send application/json without a CORS preflight, so this blocks CSRF.
+        if self.headers.get('Content-Type', '').split(';')[0].strip().lower() != 'application/json':
+            return self._send(415, {'error': 'send JSON'})
+        try:
+            n = int(self.headers.get('Content-Length', '0'))
+        except ValueError:
+            n = -1
+        if not 0 < n <= 1024:
+            return self._send(400, {'error': 'bad request'})
+        try:
+            addr = json.loads(self.rfile.read(n)).get('address')
+        except (ValueError, AttributeError):
+            return self._send(400, {'error': 'bad request'})
+        if not isinstance(addr, str) or not FULL_ADDR_RE.match(addr):
+            return self._send(400, {'error': 'not a Safex address'})
+        res = STATE.remove_address(addr)
+        if res is None:
+            return self._send(409, {'error': 'A miner is connected with this address right now. Stop it first, then remove the address.'})
+        STATE.save()
+        log('address removed from stats:', short(addr), '- %d block(s), %d worker(s) forgotten' % res)
+        self._send(200, {'ok': True, 'blocks_removed': res[0], 'workers_removed': res[1]})
+
 
 # ---------------------------------------------------------------- main
 async def housekeeping():
@@ -782,6 +860,9 @@ async def housekeeping():
                 log('stopping idle instance for', short(addr))
                 inst.stop(); INSTANCES.pop(addr, None)
         STATE.housekeeping()
+        todo = STATE.missing_rewards()
+        if todo:
+            STATE.set_rewards(await asyncio.to_thread(fetch_rewards, todo))
         STATE.save()
 
 async def main():
