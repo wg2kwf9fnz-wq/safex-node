@@ -3,6 +3,10 @@
 map $arg_start $hdr_start { "~^[0-9]{1,9}$" $arg_start; default 0; }
 map $arg_end   $hdr_end   { "~^[0-9]{1,9}$" $arg_end;   default 0; }
 
+# The CPU toggle only accepts requests that carry this custom header. Browsers cannot send it cross-site
+# without a CORS preflight, so another website cannot flip the setting while you are logged in to Umbrel.
+map $http_x_requested_with $csrf_ok { "safex-dashboard" 1; default 0; }
+
 server {
     listen 80;
     server_name _;
@@ -27,6 +31,15 @@ server {
     # Anything else under the API prefixes is an error, not the page.
     location /api/ { return 404; }
     location /stratum-api/ { return 404; }
+
+    # CPU usage toggle (GET = read, POST = change). Served by the tiny CGI started in the dashboard container.
+    location = /api/cpu-mode {
+        limit_except GET POST { deny all; }
+        if ($csrf_ok = 0) { return 403; }
+        client_max_body_size 1k;
+        proxy_pass http://127.0.0.1:8081/cgi-bin/cpu-mode;
+        proxy_read_timeout 10s;
+    }
 
     location = /api/get_info {
         set $node_upstream http://node:17402;
