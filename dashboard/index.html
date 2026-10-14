@@ -34,6 +34,8 @@
     .scrollbox th { position: sticky; top: 0; background: #1c1c1c; z-index: 1; box-shadow: 0 1px 0 #2a2a2a; }
     .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; background: #555; }
     .dot.on { background: #4caf50; }
+    .switch { display: flex; align-items: center; gap: 12px; cursor: pointer; font-size: 16px; }
+    .switch input { width: 20px; height: 20px; accent-color: #4caf50; cursor: pointer; }
     .copybtn { margin-left: 8px; padding: 4px 10px; border: 0; border-radius: 6px; background: #4caf50; color: #111; font-weight: 600; cursor: pointer; }
     details.help { margin-top: 12px; }
     details.help summary { cursor: pointer; color: #bbb; }
@@ -96,6 +98,12 @@
       <div class="label">Synchronization</div>
       <div id="syncText" class="value">—</div>
       <div class="bar"><div id="progress" class="progress"></div></div>
+    </div>
+    
+    <div class="card wide">
+      <div class="label">Node performance</div>
+      <label class="switch"><input type="checkbox" id="cpuFull" disabled> Use 100% of CPU</label>
+      <div id="cpuInfo" class="muted" style="margin-top:10px">Loading…</div>
     </div>
 
     <div class="card wide">
@@ -267,6 +275,43 @@
       }
     }
 
+        // CPU usage toggle. Off (default) = the node uses about half of the CPU threads; on = all threads (faster sync, more heat).
+    const CPU_HDR = { 'X-Requested-With': 'safex-dashboard' };
+    function showCpu(d) {
+      const full = d.mode === 'full';
+      $('cpuFull').checked = full;
+      const label = full ? 'all' : 'about half of the';
+      let t = 'The node is set to use ' + label + ' CPU threads.';
+      if (d.active && d.active !== d.mode) t = 'Applying the change — the node is restarting…';
+      else if (d.threads && d.cores) t = 'The node is using ' + d.threads + ' of ' + d.cores + ' CPU threads' + (full ? '.' : ' (and runs at low priority).');
+      t += ' Turning this on makes the initial sync faster but the computer runs hotter. Changing it restarts the node for a moment; syncing resumes where it left off.';
+      $('cpuInfo').textContent = t;
+    }
+    async function updateCpu() {
+      if ($('cpuFull').dataset.busy) return;
+      try {
+        const r = await fetch('/api/cpu-mode', { cache: 'no-store', headers: CPU_HDR });
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        showCpu(await r.json());
+        $('cpuFull').disabled = false;
+      } catch (e) {
+        $('cpuFull').disabled = true;
+        $('cpuInfo').textContent = 'CPU setting unavailable (' + e.message + ').';
+      }
+    }
+    async function setCpu() {
+      const box = $('cpuFull');
+      box.dataset.busy = '1'; box.disabled = true;
+      $('cpuInfo').textContent = 'Saving…';
+      try {
+        const r = await fetch('/api/cpu-mode', { method: 'POST', cache: 'no-store', headers: Object.assign({ 'Content-Type': 'application/json' }, CPU_HDR), body: JSON.stringify({ mode: box.checked ? 'full' : 'half' }) });
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        showCpu(await r.json());
+      } catch (e) {
+        $('cpuInfo').textContent = 'Could not change the setting (' + e.message + ').';
+      }
+      delete box.dataset.busy; box.disabled = false;
+    }
     async function updateChain() {
       try {
         const r = await fetch('/stratum-api/chain', { cache: 'no-store' });
@@ -517,6 +562,9 @@
     $('diffsvg').addEventListener('mouseleave', diffLeave); $('diffsvg').addEventListener('touchend', diffLeave);
     setInterval(() => { if (!document.hidden) updateDifficulty(); }, 60000);
     updateNode(); updateMining(); updateChain(); updateStorage();
+    updateCpu();
+    $('cpuFull').addEventListener('change', setCpu);
+    setInterval(() => { if (!document.hidden) updateCpu(); }, 10000);
     setInterval(() => { if (!document.hidden) updateStorage(); }, 60000);
     setInterval(() => { if (!document.hidden) updateChain(); }, 20000);
     setInterval(() => { if (!document.hidden) updateNode(); }, 10000);
