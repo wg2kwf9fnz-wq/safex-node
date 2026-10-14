@@ -59,6 +59,17 @@ server {
         proxy_read_timeout 10s;
     }
 
+    # The one write action: forget an address (and its recorded blocks) from the stats. POST only, small JSON body.
+    location = /stratum-api/remove-address {
+        limit_except POST { deny all; }
+        client_max_body_size 2k;
+        set $stratum_upstream http://stratum:8080;
+        proxy_pass $stratum_upstream/remove-address;
+        proxy_http_version 1.1;
+        proxy_set_header Authorization "Bearer ${STRATUM_API_TOKEN}";
+        proxy_read_timeout 10s;
+    }
+
     location = /stratum-api/state {
         set $stratum_upstream http://stratum:8080;
         proxy_pass $stratum_upstream/state;
