@@ -71,6 +71,8 @@ code{background:#f1f3f6;padding:2px 5px;border-radius:4px;word-break:break-all}i
       <div id="diffnote" class="muted" style="margin-top:6px">Loading...</div>
     </div>
 
+    <div class="card wide"><div class="label">Block time · recent chain history</div><svg id="timechart" viewBox="0 0 800 180" style="width:100%;height:auto"></svg><div id="timeNote" class="muted">Waiting for recent blocks…</div></div>
+    <div class="card wide"><div class="label">Transactions per block</div><svg id="txchart" viewBox="0 0 800 180" style="width:100%;height:auto"></svg><div id="txNote" class="muted">Waiting for recent blocks…</div></div>
     <div class="card wide">
       <div class="label">Recent blocks <span class="muted">&mdash; Safex is a privacy chain: amounts and addresses are hidden on-chain, so only public block data is shown</span></div>
       <div class="tablewrap scrollbox"><table style="min-width:460px">
@@ -290,6 +292,7 @@ code{background:#f1f3f6;padding:2px 5px;border-radius:4px;word-break:break-all}i
         const c = await r.json();
         const me = myAddr();
         const shown = (c.blocks || []).slice(0, 100);
+        drawRecentCharts(shown);
         $('chainCount').textContent = shown.length ? 'Showing the last ' + shown.length + ' blocks (scroll for older ones)' : '';
         setHtml('recentChain', shown.map(b => {
           const via = b.found_by
@@ -426,6 +429,8 @@ code{background:#f1f3f6;padding:2px 5px;border-radius:4px;word-break:break-all}i
       updateDifficulty();
     }
 
+    function drawRecentCharts(blocks){const ordered=blocks.slice().filter(b=>Number.isFinite(Number(b.timestamp))).sort((a,b)=>Number(a.height)-Number(b.height));const intervals=[];for(let i=1;i<ordered.length;i++)intervals.push({y:Math.max(0,Number(ordered[i].timestamp)-Number(ordered[i-1].timestamp))});drawMiniChart('timechart',intervals.slice(-60),'#3979d1',1800);$('timeNote').textContent=intervals.length?'Intervals between the latest '+Math.min(60,intervals.length)+' available blocks; actual timestamps, seconds.':'Not enough block timestamps yet.';const tx=ordered.slice(-60).map(b=>({y:Math.max(0,Number(b.txs)||0)}));drawMiniChart('txchart',tx,'#3979d1');$('txNote').textContent=tx.length?'Transaction counts from the latest '+tx.length+' blocks.':'Transaction counts unavailable.';}
+function drawMiniChart(id,points,stroke,cap){const el=$(id),W=800,H=180,L=38,R=12,T=12,B=24;if(!el)return;if(!points.length){el.innerHTML='<text x="400" y="90" text-anchor="middle" fill="#9299a4" font-size="16">No data yet</text>';return;}const max=Math.max(1,cap||Math.max(...points.map(p=>p.y))),span=Math.max(1,points.length-1),X=i=>L+i/span*(W-L-R),Y=v=>T+(1-v/max)*(H-T-B);let svg='';for(let i=0;i<=4;i++){const y=T+i*(H-T-B)/4;svg+='<line x1="'+L+'" x2="'+(W-R)+'" y1="'+y+'" y2="'+y+'" stroke="#edf0f4"/>';}const line=points.map((p,i)=>(i?'L':'M')+X(i).toFixed(1)+' '+Y(Math.min(max,p.y)).toFixed(1)).join(' ');svg+='<path d="'+line+' L'+X(points.length-1)+' '+(H-B)+' L'+L+' '+(H-B)+' Z" fill="'+stroke+'" opacity=".12"/><path d="'+line+'" fill="none" stroke="'+stroke+'" stroke-width="3" stroke-linejoin="round"/>';el.innerHTML=svg;}
     function renderChart(addresses) {
       const rows = (addresses || []).filter(a => a.blocks > 0 || a.connected > 0 || a.hashrate > 0);
       if (!rows.length) { setHtml('chart', '<div class="muted">No miners yet</div>'); return; }
