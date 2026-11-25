@@ -73,7 +73,9 @@ server {
         proxy_pass $stratum_upstream/chain;
         proxy_http_version 1.1;
         proxy_set_header Authorization "Bearer ${STRATUM_API_TOKEN}";
-        proxy_read_timeout 10s;
+        proxy_connect_timeout 5s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 70s;
     }
 
     # The one write action: forget an address (and its recorded blocks) from the stats. POST only, small JSON body.
