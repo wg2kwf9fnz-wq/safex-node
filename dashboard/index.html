@@ -5,80 +5,17 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Safex Full Node</title>
   <style>
-    body { margin: 0; padding: 32px; background: #111; color: #eee; font-family: system-ui, sans-serif; }
-    .container { max-width: 900px; margin: auto; }
-    h1 { margin-bottom: 8px; }
-    h2 { margin: 40px 0 8px; }
-    .status { margin-bottom: 24px; color: #aaa; }
-    .tabs { display: flex; gap: 8px; margin: 22px 0; border-bottom: 1px solid #333; }
-    .tab-button { border: 0; border-bottom: 3px solid transparent; padding: 12px 16px; background: transparent; color: #aaa; font: inherit; font-weight: 600; cursor: pointer; }
-    .tab-button[aria-selected="true"] { color: #eee; border-bottom-color: #4caf50; }
-    .tab-panel[hidden] { display: none; }
-    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; }
-    .card { background: #1c1c1c; border-radius: 12px; padding: 20px; }
-    .label { color: #999; font-size: 13px; margin-bottom: 8px; }
-    .value { font-size: 24px; font-weight: 600; word-break: break-word; }
-    .value.small { font-size: 16px; font-family: ui-monospace, monospace; }
-    .sync, .wide { margin-top: 16px; }
-    .bar { height: 10px; background: #333; border-radius: 5px; overflow: hidden; margin-top: 10px; }
-    .progress { height: 100%; width: 0%; background: #4caf50; }
-    .error { color: #f66; }
-    .ok { color: #4caf50; }
-    .warn { color: #fb3; }
-    .muted { color: #888; font-size: 13px; line-height: 1.5; }
-    input[type=text] { width: 100%; box-sizing: border-box; padding: 10px; border-radius: 8px; border: 1px solid #333; background: #111; color: #eee; font-family: ui-monospace, monospace; font-size: 13px; }
-    input[type=text]:focus { outline: 1px solid #4caf50; }
-    table { width: 100%; border-collapse: collapse; font-size: 14px; min-width: 560px; }
-    th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #2a2a2a; white-space: nowrap; }
-    th { color: #999; font-weight: 500; }
-    code { background: #111; padding: 2px 6px; border-radius: 4px; word-break: break-all; }
-    .tablewrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
-    /* long tables (recent blocks): fixed height, scroll inside the card, header stays visible */
-    .scrollbox { max-height: 480px; overflow-y: auto; border: 1px solid #2a2a2a; border-radius: 8px; color-scheme: dark; }
-    .scrollbox th { position: sticky; top: 0; background: #1c1c1c; z-index: 1; box-shadow: 0 1px 0 #2a2a2a; }
-    .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; background: #555; }
-    .dot.on { background: #4caf50; }
-    .switch { display: flex; align-items: center; gap: 12px; cursor: pointer; font-size: 16px; }
-    .switch input { width: 20px; height: 20px; accent-color: #4caf50; cursor: pointer; }
-    .copybtn { margin-left: 8px; padding: 4px 10px; border: 0; border-radius: 6px; background: #4caf50; color: #111; font-weight: 600; cursor: pointer; }
-    details.help { margin-top: 12px; }
-    details.help summary { cursor: pointer; color: #bbb; }
-    details.help ol { margin: 8px 0 0; padding-left: 20px; }
-    details.help li { margin-bottom: 6px; }
-    /* network difficulty graph */
-    .rangebtns { float: right; }
-    .rangebtns button { background: #2a2a2a; color: #ccc; border: 0; padding: 4px 12px; font-size: 12px; cursor: pointer; }
-    .rangebtns button:first-child { border-radius: 6px 0 0 6px; }
-    .rangebtns button:last-child { border-radius: 0 6px 6px 0; }
-    .rangebtns button.on { background: #4caf50; color: #111; font-weight: 600; }
-    .diffstats { display: flex; flex-wrap: wrap; gap: 8px 28px; margin: 14px 0 6px; }
-    .diffstats .k { color: #999; font-size: 12px; }
-    .diffstats .v { font-size: 16px; font-weight: 600; }
-    #diffwrap { position: relative; margin-top: 8px; }
-    #diffsvg { width: 100%; height: auto; display: block; touch-action: pan-y; }
-    #difftip { position: absolute; pointer-events: none; background: #000d; border: 1px solid #444; border-radius: 6px; padding: 6px 8px; font-size: 12px; line-height: 1.4; white-space: nowrap; display: none; z-index: 2; }
-    .you { color: #4caf50; font-size: 12px; margin-left: 6px; }
-    /* blocks-per-address chart */
-    .chartrow { display: grid; grid-template-columns: 130px 1fr 36px 118px 22px; align-items: center; gap: 10px; margin: 8px 0; font-size: 14px; }
-    .chartrow .name { font-family: ui-monospace, monospace; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .chartrow .track { background: #2a2a2a; border-radius: 6px; height: 22px; overflow: hidden; }
-    .chartrow .fill { height: 100%; background: linear-gradient(90deg, #2478dc, #4aa3f5); min-width: 0; transition: width .4s; }
-    .chartrow .num { text-align: right; font-weight: 600; }
-    .chartrow .sfx { text-align: right; font-size: 13px; color: #bbb; white-space: nowrap; }
-    .chartrow .rm { background: none; border: 0; color: #777; font-size: 20px; line-height: 1; padding: 0; cursor: pointer; }
-    .chartrow .rm:hover, .chartrow .rm:focus-visible { color: #f66; }
-    .chartrow .rm:disabled { opacity: .4; cursor: default; }
-    @media (max-width: 600px) {
-      body { padding: 16px; }
-      h1 { font-size: 24px; }
-      .card { padding: 16px; }
-      .value { font-size: 20px; }
-      .grid { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
-      .chartrow { grid-template-columns: 84px 1fr 26px 82px 22px; gap: 6px; }
-      .chartrow .sfx { font-size: 12px; }
-      .scrollbox { max-height: 380px; }
-    }
-  </style>
+*{box-sizing:border-box}body{margin:0;padding:16px 10px 36px;background:#050505;color:#f4f5f7;font-family:Inter,system-ui,sans-serif}.container{max-width:760px;width:100%;margin:auto}.container>h1{font-size:20px;margin:4px 2px}.status{font-size:12px;color:#65c995;margin:0 2px 12px;min-height:18px}
+.tabs{display:flex;gap:8px;margin:12px 0 16px;border-bottom:1px solid #292929}.tab-button{border:0;border-bottom:2px solid transparent;padding:11px 13px;background:transparent;color:#999;font:inherit;font-size:13px;font-weight:700;cursor:pointer}.tab-button[aria-selected=true]{color:#fff;border-bottom-color:#4c91f4}.tab-panel[hidden]{display:none}
+#tab-dashboard{display:flex;flex-direction:column;gap:8px}.card{background:#fff;color:#20232a;border:0;border-radius:13px;padding:14px 15px;min-width:0;box-shadow:0 1px 2px #0002}.label{color:#737b87;font-size:10px;letter-spacing:.08em;font-weight:800;text-transform:uppercase;margin-bottom:8px}.value{font-size:22px;line-height:1.15;font-weight:760;color:#17345f;overflow-wrap:anywhere}.value.small{font-size:14px;font-family:ui-monospace,monospace}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.grid .card{padding:12px 13px;min-height:65px}.grid .label{margin-bottom:6px}.grid .value{font-size:19px}
+.sync{margin-top:0}.bar{height:8px;background:#e9edf3;border-radius:8px;overflow:hidden;margin-top:9px}.progress{height:100%;width:0;background:#3678d4;border-radius:8px}.error{color:#c43d42}.ok{color:#24945b}.warn{color:#b07817}.muted{color:#9299a4;font-size:11px;line-height:1.5}
+.rangebtns{float:right}.rangebtns button{background:#f0f2f6;color:#687080;border:0;border-radius:5px;padding:5px 8px;font-size:10px;cursor:pointer}.rangebtns button.on{background:#dce8fb;color:#245ba9;font-weight:800}.diffstats{display:flex;flex-wrap:wrap;gap:12px 20px;margin:10px 0 5px}.diffstats .k{color:#8b919b;font-size:10px}.diffstats .v{font-size:14px;font-weight:750;color:#283e61}
+#diffwrap{position:relative;margin-top:7px}#diffsvg{width:100%;height:auto;display:block;touch-action:pan-y}#difftip{position:absolute;pointer-events:none;background:#17202f;color:#fff;border-radius:6px;padding:6px 8px;font-size:11px;display:none;z-index:2}
+.tablewrap{overflow-x:auto;-webkit-overflow-scrolling:touch}.scrollbox{max-height:370px;overflow-y:auto;border:1px solid #e8ebf0;border-radius:8px;color-scheme:light}table{width:100%;border-collapse:collapse;font-size:11px;min-width:470px}th,td{text-align:left;padding:8px 7px;border-bottom:1px solid #e8ebf0;white-space:nowrap}th{color:#7c8491;font-weight:700;background:#fafbfc}.scrollbox th{position:sticky;top:0;z-index:1}
+code{background:#f1f3f6;padding:2px 5px;border-radius:4px;word-break:break-all}input[type=text]{width:100%;padding:10px;border-radius:8px;border:1px solid #dce1e8;background:#fff;color:#222;font:12px ui-monospace,monospace}.copybtn{margin-left:7px;padding:5px 10px;border:0;border-radius:6px;background:#dce8fb;color:#245ba9;font-weight:700;cursor:pointer}details.help{margin-top:12px}details.help summary{cursor:pointer;color:#687080}details.help ol{padding-left:20px}details.help li{margin:7px 0}
+.switch{display:flex;align-items:center;gap:10px;color:#303744;font-size:13px}.switch input{width:18px;height:18px;accent-color:#3678d4}.chartrow{display:grid;grid-template-columns:110px 1fr 28px 95px 20px;align-items:center;gap:7px;margin:8px 0;font-size:12px}.chartrow .name{font:11px ui-monospace,monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.chartrow .track{height:18px;background:#edf0f4;border-radius:5px;overflow:hidden}.chartrow .fill{height:100%;background:#3979d1}.chartrow .num{text-align:right;font-weight:700}.chartrow .sfx{text-align:right;color:#7c8491;font-size:11px}.chartrow .rm{border:0;background:none;color:#999;font-size:18px}.you{color:#24945b;font-size:11px;margin-left:4px}
+@media(min-width:620px){body{padding:28px 20px}.container{max-width:850px}.grid{grid-template-columns:repeat(4,minmax(0,1fr))}.card{padding:17px 19px}}@media(max-width:380px){body{padding:12px 8px}.card{padding:11px}.grid .card{padding:10px}.grid .value{font-size:17px}.chartrow{grid-template-columns:75px 1fr 22px 72px 18px;gap:5px}}
+</style>
 </head>
 <body>
   <div class="container">
@@ -134,6 +71,8 @@
       <div id="diffnote" class="muted" style="margin-top:6px">Loading...</div>
     </div>
 
+    <div class="card wide"><div class="label">Block time · recent chain history</div><svg id="timechart" viewBox="0 0 800 180" style="width:100%;height:auto"></svg><div id="timeNote" class="muted">Waiting for recent blocks…</div></div>
+    <div class="card wide"><div class="label">Transactions per block</div><svg id="txchart" viewBox="0 0 800 180" style="width:100%;height:auto"></svg><div id="txNote" class="muted">Waiting for recent blocks…</div></div>
     <div class="card wide">
       <div class="label">Recent blocks <span class="muted">&mdash; Safex is a privacy chain: amounts and addresses are hidden on-chain, so only public block data is shown</span></div>
       <div class="tablewrap scrollbox"><table style="min-width:460px">
@@ -353,6 +292,7 @@
         const c = await r.json();
         const me = myAddr();
         const shown = (c.blocks || []).slice(0, 100);
+        drawRecentCharts(shown);
         $('chainCount').textContent = shown.length ? 'Showing the last ' + shown.length + ' blocks (scroll for older ones)' : '';
         setHtml('recentChain', shown.map(b => {
           const via = b.found_by
@@ -489,6 +429,8 @@
       updateDifficulty();
     }
 
+    function drawRecentCharts(blocks){const ordered=blocks.slice().filter(b=>Number.isFinite(Number(b.timestamp))).sort((a,b)=>Number(a.height)-Number(b.height));const intervals=[];for(let i=1;i<ordered.length;i++)intervals.push({y:Math.max(0,Number(ordered[i].timestamp)-Number(ordered[i-1].timestamp))});drawMiniChart('timechart',intervals.slice(-60),'#3979d1',1800);$('timeNote').textContent=intervals.length?'Intervals between the latest '+Math.min(60,intervals.length)+' available blocks; actual timestamps, seconds.':'Not enough block timestamps yet.';const tx=ordered.slice(-60).map(b=>({y:Math.max(0,Number(b.txs)||0)}));drawMiniChart('txchart',tx,'#3979d1');$('txNote').textContent=tx.length?'Transaction counts from the latest '+tx.length+' blocks.':'Transaction counts unavailable.';}
+function drawMiniChart(id,points,stroke,cap){const el=$(id),W=800,H=180,L=38,R=12,T=12,B=24;if(!el)return;if(!points.length){el.innerHTML='<text x="400" y="90" text-anchor="middle" fill="#9299a4" font-size="16">No data yet</text>';return;}const max=Math.max(1,cap||Math.max(...points.map(p=>p.y))),span=Math.max(1,points.length-1),X=i=>L+i/span*(W-L-R),Y=v=>T+(1-v/max)*(H-T-B);let svg='';for(let i=0;i<=4;i++){const y=T+i*(H-T-B)/4;svg+='<line x1="'+L+'" x2="'+(W-R)+'" y1="'+y+'" y2="'+y+'" stroke="#edf0f4"/>';}const line=points.map((p,i)=>(i?'L':'M')+X(i).toFixed(1)+' '+Y(Math.min(max,p.y)).toFixed(1)).join(' ');svg+='<path d="'+line+' L'+X(points.length-1)+' '+(H-B)+' L'+L+' '+(H-B)+' Z" fill="'+stroke+'" opacity=".12"/><path d="'+line+'" fill="none" stroke="'+stroke+'" stroke-width="3" stroke-linejoin="round"/>';el.innerHTML=svg;}
     function renderChart(addresses) {
       const rows = (addresses || []).filter(a => a.blocks > 0 || a.connected > 0 || a.hashrate > 0);
       if (!rows.length) { setHtml('chart', '<div class="muted">No miners yet</div>'); return; }
