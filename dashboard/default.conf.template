@@ -46,7 +46,9 @@ server {
         proxy_pass $node_upstream/get_info;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
-        proxy_read_timeout 10s;
+        proxy_connect_timeout 5s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
     }
 
     # Block headers (height, time, difficulty) for the difficulty graph. A fixed read-only RPC call: the browser can
@@ -59,7 +61,9 @@ server {
         proxy_set_header Host $host;
         proxy_set_header Content-Type "application/json";
         proxy_set_body '{"jsonrpc":"2.0","id":"0","method":"get_block_headers_range","params":{"start_height":$hdr_start,"end_height":$hdr_end}}';
-        proxy_read_timeout 20s;
+        proxy_connect_timeout 5s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
     }
 
     # Stratum gateway API (read-only stats). The token never reaches the browser: nginx adds it.
@@ -69,7 +73,9 @@ server {
         proxy_pass $stratum_upstream/chain;
         proxy_http_version 1.1;
         proxy_set_header Authorization "Bearer ${STRATUM_API_TOKEN}";
-        proxy_read_timeout 10s;
+        proxy_connect_timeout 5s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 70s;
     }
 
     # The one write action: forget an address (and its recorded blocks) from the stats. POST only, small JSON body.

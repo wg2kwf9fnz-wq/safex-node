@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - umbrel-7.0.3
+      - umbrel-reliability-improvements
     paths:
       - "stratum/**"
       - ".github/workflows/docker-stratum.yml"
@@ -12,7 +13,7 @@ on:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository_owner }}/safex-stratum
-  VERSION: 6.26.0-sfx6
+  VERSION: 6.26.0-sfx6-reliability
 
 jobs:
   build-and-push:

@@ -378,7 +378,8 @@ class Instance:
             PROXY_BIN, '--config=' + path, '--no-color',
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
         self.task = asyncio.create_task(self._read_output())
-        deadline = time.time() + 20
+        # Initial sync can make get_block_template slow; keep the proxy alive while the node catches up.
+        deadline = time.time() + 90
         while time.time() < deadline:
             if not self.alive():
                 raise RuntimeError('proxy instance exited: ' + ' | '.join(list(self.tail)[-3:]))
@@ -386,7 +387,7 @@ class Instance:
                 self.ready = True
                 log('instance up for', short(self.addr), 'on port', self.port)
                 return
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(1)
         raise RuntimeError('no job from node in time: ' + ' | '.join(list(self.tail)[-3:]))
 
     async def _probe(self):
@@ -476,7 +477,7 @@ def node_template(addr):
     req = urllib.request.Request('http://%s:%d/json_rpc' % (DAEMON_HOST, DAEMON_PORT), data=body,
                                  headers={'Content-Type': 'application/json'})
     try:
-        with urllib.request.urlopen(req, timeout=10) as r:
+        with urllib.request.urlopen(req, timeout=30) as r:
             resp = json.loads(r.read())
     except Exception:
         return 'busy'
@@ -749,7 +750,7 @@ def _rpc(path, body=None):
     url = 'http://%s:%d%s' % (DAEMON_HOST, DAEMON_PORT, path)
     req = urllib.request.Request(url, data=json.dumps(body).encode() if body is not None else None,
                                  headers={'Content-Type': 'application/json'})
-    with urllib.request.urlopen(req, timeout=8) as r:
+    with urllib.request.urlopen(req, timeout=30) as r:
         return json.loads(r.read())
 
 def fetch_rewards(heights):
