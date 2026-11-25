@@ -246,7 +246,10 @@
     function pubHost() { return ($('pubhost').value || '').trim().replace(/^[a-z+]+:\/\//i, '').replace(/[:\/].*$/, '').replace(/[^A-Za-z0-9.-]/g, ''); }
     function youTag(addr) { return addr && addr === myAddr() ? '<span class="you">(you)</span>' : ''; }
 
+    let nodeUpdateBusy = false;
     async function updateNode() {
+      if (nodeUpdateBusy) return;
+      nodeUpdateBusy = true;
       try {
         const response = await fetch('/api/get_info', { cache: 'no-store' });
         if (!response.ok) throw new Error('HTTP ' + response.status);
@@ -272,6 +275,8 @@
         $('progress').style.width = percent + '%';
       } catch (error) {
         setHtml('status', '<span class="error">Unable to connect to Safex node (' + esc(error.message) + ')</span>');
+      } finally {
+        nodeUpdateBusy = false;
       }
     }
 
